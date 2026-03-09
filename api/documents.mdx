@@ -420,9 +420,109 @@ const patches = Automerge.diff(doc, heads1, Automerge.getHeads(doc))
 
 ---
 
+## getActorId
+
+Get the actor ID associated with a document.
+
+```typescript
+function getActorId<T>(doc: Doc<T>): ActorId
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document
+</ParamField>
+
+**Returns**: `ActorId` - The actor ID string
+
+### Example
+
+```typescript
+const doc = Automerge.init({ actorId: "user-123" })
+console.log(Automerge.getActorId(doc)) // "user-123"
+```
+
+---
+
+## getHeads
+
+Get the current heads (version markers) of a document. Heads are like Git commit hashes - they uniquely identify a specific version of the document.
+
+```typescript
+function getHeads<T>(doc: Doc<T>): Heads
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document
+</ParamField>
+
+**Returns**: `Heads` - Array of change hashes representing the current version
+
+### Example
+
+```typescript
+const heads1 = Automerge.getHeads(doc)
+doc = Automerge.change(doc, d => { d.counter++ })
+const heads2 = Automerge.getHeads(doc)
+// heads1 !== heads2 because document changed
+
+const snapshot = Automerge.view(doc, heads1)
+```
+
+---
+
+## isAutomerge
+
+Check if a value is an Automerge document.
+
+```typescript
+function isAutomerge(doc: unknown): boolean
+```
+
+<ParamField path="doc" type="unknown" required>
+  Value to check
+</ParamField>
+
+**Returns**: `boolean` - True if the value is an Automerge document
+
+### Example
+
+```typescript
+const doc = Automerge.init()
+console.log(Automerge.isAutomerge(doc)) // true
+console.log(Automerge.isAutomerge({})) // false
+```
+
+---
+
+## toJS
+
+Convert an Automerge document to a plain JavaScript object. This creates a deep copy with no Automerge metadata.
+
+```typescript
+function toJS<T>(doc: Doc<T>): T
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The Automerge document
+</ParamField>
+
+**Returns**: `T` - Plain JavaScript object
+
+### Example
+
+```typescript
+const doc = Automerge.from({ name: "Alice", count: 5 })
+const plain = Automerge.toJS(doc)
+console.log(plain) // { name: "Alice", count: 5 }
+console.log(Automerge.isAutomerge(plain)) // false
+```
+
+<Note>
+  `toJS()` is useful when you need to pass data to libraries that don't work with Automerge documents, or when serializing to JSON.
+</Note>
+
+---
+
 ## Related Functions
 
-- `getActorId<T>(doc: Doc<T>): ActorId` - Get the actor ID of a document
-- `getHeads<T>(doc: Doc<T>): Heads` - Get the current heads of a document
-- `isAutomerge(doc: unknown): boolean` - Check if a value is an Automerge document
-- `getObjectId(doc: any): ObjID | null` - Get the object ID of a value
+- `getObjectId(doc: any, prop?: Prop): ObjID | null` - Get the internal object ID of a value (advanced)

@@ -469,8 +469,109 @@ if (lastChange) {
 
 ---
 
+## getHistory
+
+Get the complete history of a document as an array of states, one per change.
+
+```typescript
+function getHistory<T>(doc: Doc<T>): State<T>[]
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document
+</ParamField>
+
+**Returns**: `State<T>[]` - Array of document states, each containing `snapshot` and `change` metadata
+
+### Example
+
+```typescript
+let doc = Automerge.init()
+doc = Automerge.change(doc, d => { d.count = 1 })
+doc = Automerge.change(doc, d => { d.count = 2 })
+
+const history = Automerge.getHistory(doc)
+console.log(history.length) // 2
+console.log(history[0].snapshot) // { count: 1 }
+console.log(history[1].snapshot) // { count: 2 }
+```
+
+---
+
+## getConflicts
+
+Get all conflicting values for a property when concurrent assignments occur.
+
+```typescript
+function getConflicts<T>(
+  object: any,
+  prop: Prop
+): Conflicts | undefined
+```
+
+<ParamField path="object" type="any" required>
+  The parent object containing the property (not the document root)
+</ParamField>
+
+<ParamField path="prop" type="Prop" required>
+  The property name or index
+</ParamField>
+
+**Returns**: `Conflicts | undefined` - Object mapping operation IDs to values, or undefined if no conflicts
+
+### Example
+
+```typescript
+let doc1 = Automerge.init()
+doc1 = Automerge.change(doc1, d => { d.name = "Alice" })
+
+let doc2 = Automerge.clone(doc1)
+doc1 = Automerge.change(doc1, d => { d.name = "Alice Smith" })
+doc2 = Automerge.change(doc2, d => { d.name = "Alice Jones" })
+
+const merged = Automerge.merge(doc1, doc2)
+console.log(merged.name) // One value (deterministic)
+
+const conflicts = Automerge.getConflicts(merged, "name")
+console.log(Object.values(conflicts)) // ["Alice Smith", "Alice Jones"]
+```
+
+<Warning>
+  Pass the **parent object** containing the property, not the document root. For nested properties, pass the immediate parent.
+</Warning>
+
+---
+
+## getMissingDeps
+
+Get the change hashes that are referenced but not present in a document. Useful for sync to determine what changes need to be sent.
+
+```typescript
+function getMissingDeps<T>(doc: Doc<T>, heads: Heads): Heads
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document
+</ParamField>
+
+<ParamField path="heads" type="Heads" required>
+  The heads to check against
+</ParamField>
+
+**Returns**: `Heads` - Array of missing change hashes
+
+### Example
+
+```typescript
+const missingChanges = Automerge.getMissingDeps(doc, remoteHeads)
+if (missingChanges.length > 0) {
+  // Send these changes to the peer
+}
+```
+
+---
+
 ## Related Functions
 
-- `getHistory<T>(doc: Doc<T>): State<T>[]` - Get the full history of a document
-- `diff(doc: Doc<unknown>, before: Heads, after: Heads): Patch[]` - Get patches between two states
-- `getConflicts<T>(doc: Doc<T>, prop: Prop): Conflicts | undefined` - Get conflicts for a property
+- `diff(doc: Doc<unknown>, before: Heads, after: Heads): Patch[]` - Generate patches between two document versions (see [Patches guide](/advanced/patches))
+- `equals(val1: unknown, val2: unknown): boolean` - Deep equality check for Automerge values
