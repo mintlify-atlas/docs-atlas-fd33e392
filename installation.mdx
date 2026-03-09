@@ -1,0 +1,229 @@
+---
+title: Installation
+description: Install Automerge and set up your development environment for building local-first collaborative applications
+---
+
+Automerge is available as an npm package and works in both Node.js and browser environments. The library is written in Rust, compiled to WebAssembly, and wrapped in an idiomatic JavaScript API.
+
+## Package Installation
+
+Install Automerge using your preferred package manager:
+
+<CodeGroup>
+
+```bash npm
+npm install @automerge/automerge
+```
+
+```bash yarn
+yarn add @automerge/automerge
+```
+
+```bash pnpm
+pnpm add @automerge/automerge
+```
+
+</CodeGroup>
+
+## Node.js Setup
+
+If you're building a Node.js application, you can start using Automerge immediately after installation. No additional configuration is required:
+
+```javascript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.init()
+doc = Automerge.change(doc, d => {
+  d.hello = "world"
+})
+
+console.log(doc) // { hello: "world" }
+```
+
+<Note>
+Automerge automatically detects the Node.js environment and loads the appropriate WebAssembly module.
+</Note>
+
+## Browser Setup
+
+Browsers don't currently support WebAssembly modules in ESM imports, so you'll need to configure your bundler. Automerge includes the WebAssembly binary and provides examples for common bundlers.
+
+### Webpack 5
+
+Enable the `asyncWebAssembly` experiment in your `webpack.config.js`:
+
+```javascript
+module.exports = {
+  // ... other config
+  experiments: {
+    asyncWebAssembly: true
+  },
+  performance: {
+    // Prevent warnings about the WASM blob size
+    hints: false,
+    maxEntrypointSize: 512000,
+    maxAssetSize: 512000
+  }
+}
+```
+
+<Tip>
+For a complete working example, check the `javascript/examples/webpack` directory in the Automerge repository.
+</Tip>
+
+### Vite
+
+Install the required Vite plugins:
+
+<CodeGroup>
+
+```bash npm
+npm install --save-dev vite-plugin-wasm vite-plugin-top-level-await
+```
+
+```bash yarn
+yarn add -D vite-plugin-wasm vite-plugin-top-level-await
+```
+
+```bash pnpm
+pnpm add -D vite-plugin-wasm vite-plugin-top-level-await
+```
+
+</CodeGroup>
+
+Then configure `vite.config.js`:
+
+```javascript
+import { defineConfig } from "vite"
+import wasm from "vite-plugin-wasm"
+import topLevelAwait from "vite-plugin-top-level-await"
+
+export default defineConfig({
+  plugins: [topLevelAwait(), wasm()],
+
+  // Required if using SharedWorker or WebWorker
+  worker: {
+    format: "es",
+    plugins: [topLevelAwait(), wasm()]
+  },
+
+  optimizeDeps: {
+    // Prevents duplicate JS wrapper initialization
+    exclude: ["@automerge/automerge-wasm"]
+  }
+})
+```
+
+<Tip>
+For a complete working example, check the `javascript/examples/vite` directory in the Automerge repository.
+</Tip>
+
+### Create React App
+
+For Create React App, you'll need to use CRACO (Create React App Configuration Override) to customize the Webpack configuration:
+
+1. Install CRACO:
+
+```bash
+npm install @craco/craco
+```
+
+2. Create a `craco.config.js` file:
+
+```javascript
+module.exports = {
+  webpack: {
+    configure: (webpackConfig) => {
+      webpackConfig.experiments = {
+        asyncWebAssembly: true
+      }
+      return webpackConfig
+    }
+  }
+}
+```
+
+3. Update your `package.json` scripts to use CRACO instead of react-scripts.
+
+<Tip>
+For a complete working example, check the `javascript/examples/create-react-app` directory in the Automerge repository.
+</Tip>
+
+## WebAssembly Details
+
+Automerge wraps a core library written in Rust and compiled to WebAssembly, distributed as `@automerge/automerge-wasm`. The main `@automerge/automerge` package provides different entry points optimized for various environments:
+
+- **Node.js**: Automatically loads the WASM module using Node's file system
+- **Browser (bundler)**: Requires bundler configuration for WASM support
+- **Cloudflare Workers**: Uses a specialized entry point for the Workers runtime
+
+### Slim Build
+
+Automerge also offers a "slim" build that excludes the embedded WASM binary, requiring you to load it separately:
+
+```javascript
+import * as Automerge from "@automerge/automerge/slim"
+import wasmUrl from "@automerge/automerge/automerge.wasm"
+
+// Initialize with the WASM URL
+await Automerge.initializeWasm(fetch(wasmUrl))
+
+// Now use Automerge normally
+let doc = Automerge.init()
+```
+
+<Note>
+The slim build is useful for reducing bundle size when you have specific WASM loading requirements.
+</Note>
+
+## TypeScript Support
+
+Automerge is written in TypeScript and includes full type definitions. No additional installation is required:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type Task = {
+  description: string
+  done: boolean
+}
+
+type TodoList = {
+  tasks: Task[]
+}
+
+let doc = Automerge.init<TodoList>()
+doc = Automerge.change(doc, d => {
+  d.tasks = [
+    { description: "Install Automerge", done: true },
+    { description: "Build amazing apps", done: false }
+  ]
+})
+```
+
+## Verification
+
+Verify your installation by running this simple test:
+
+```javascript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.init()
+doc = Automerge.change(doc, d => {
+  d.message = "Automerge is working!"
+})
+
+console.log(doc) // { message: "Automerge is working!" }
+```
+
+<Warning>
+If you encounter errors about out-of-date documents or cloning issues, see the [Quickstart](/quickstart) guide for important information about document lifecycle management.
+</Warning>
+
+## Next Steps
+
+Now that Automerge is installed, learn how to build your first collaborative application:
+
+<Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+  Create your first Automerge document and learn core concepts
+</Card>

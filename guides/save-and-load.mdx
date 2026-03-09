@@ -1,0 +1,292 @@
+---
+title: Save and Load
+description: Learn how to persist and restore Automerge documents
+---
+
+Automerge provides functions to serialize documents to binary format for storage or transmission over a network.
+
+## Saving a complete document
+
+Use `save()` to export the entire document history as a compressed binary:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ title: "My Document", content: "Hello" })
+
+doc = Automerge.change(doc, d => {
+  d.content = "Hello, world!"
+})
+
+// Save the complete document
+const binary = Automerge.save(doc)
+
+// binary is a Uint8Array that can be stored or transmitted
+```
+
+The `save()` function returns a `Uint8Array` containing the complete document history in a compressed format.
+
+## Loading a complete document
+
+Use `load()` to restore a document from binary data:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// Load from binary data
+const doc = Automerge.load<{ title: string, content: string }>(binary)
+
+console.log(doc.title)   // "My Document"
+console.log(doc.content) // "Hello, world!"
+```
+
+<Note>
+`load()` throws an error if passed incomplete content. If you're receiving data over the network and might not have the complete document yet, use `loadIncremental()` instead.
+</Note>
+
+## Load options
+
+You can pass options to `load()`:
+
+```typescript
+const doc = Automerge.load(binary, {
+  actor: "custom-actor-id",
+  freeze: true,
+  patchCallback: (patches, info) => {
+    console.log("Document loaded:", patches)
+  }
+})
+```
+
+## Incremental saving
+
+For efficient updates, use `saveIncremental()` to save only the changes since the last save:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ counter: 0 })
+
+// Make some changes
+doc = Automerge.change(doc, d => { d.counter = 1 })
+doc = Automerge.change(doc, d => { d.counter = 2 })
+
+// Save incremental changes
+const incrementalData = Automerge.saveIncremental(doc)
+
+// The next call only includes NEW changes
+doc = Automerge.change(doc, d => { d.counter = 3 })
+const moreChanges = Automerge.saveIncremental(doc)
+```
+
+<Tip>
+`saveIncremental()` only returns changes since the last call to `saveIncremental()` on this document instance. This is perfect for sending updates to other peers.
+</Tip>
+
+## Loading incremental changes
+
+Use `loadIncremental()` to apply incremental changes to an existing document:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.from({ counter: 0 })
+
+// Make changes and save incrementally
+doc1 = Automerge.change(doc1, d => { d.counter = 1 })
+const changes = Automerge.saveIncremental(doc1)
+
+// Apply to another document
+let doc2 = Automerge.init<{ counter: number }>()
+doc2 = Automerge.loadIncremental(doc2, changes)
+
+console.log(doc2.counter) // 1
+```
+
+<Note>
+`loadIncremental()` can also load complete documents saved with `save()`. It's a more flexible alternative to `load()`.
+</Note>
+
+## Practical example: Append-only file storage
+
+Here's a pattern for storing Automerge documents in an append-only file:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+import * as fs from "fs"
+
+class DocumentStore {
+  private doc: Automerge.Doc<any>
+  private filePath: string
+  
+  constructor(filePath: string) {
+    this.filePath = filePath
+    
+    // Load existing document or create new one
+    if (fs.existsSync(filePath)) {
+      const data = fs.readFileSync(filePath)
+      this.doc = Automerge.load(data)
+    } else {
+      this.doc = Automerge.init()
+    }
+  }
+  
+  change(fn: (doc: any) => void) {
+    this.doc = Automerge.change(this.doc, fn)
+    
+    // Save incremental changes
+    const changes = Automerge.saveIncremental(this.doc)
+    
+    // Append to file
+    fs.appendFileSync(this.filePath, changes)
+  }
+  
+  getDoc() {
+    return this.doc
+  }
+  
+  // Periodically compact the file
+  compact() {
+    const fullDoc = Automerge.save(this.doc)
+    fs.writeFileSync(this.filePath, fullDoc)
+  }
+}
+
+// Usage
+const store = new DocumentStore("./my-doc.automerge")
+
+store.change(d => {
+  d.title = "Hello"
+})
+
+store.change(d => {
+  d.content = "World"
+})
+
+// Periodically compact to reduce file size
+store.compact()
+```
+
+## Practical example: localStorage
+
+Here's how to persist documents in the browser:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+function saveToLocalStorage(doc: Automerge.Doc<any>, key: string) {
+  const binary = Automerge.save(doc)
+  const base64 = btoa(String.fromCharCode(...binary))
+  localStorage.setItem(key, base64)
+}
+
+function loadFromLocalStorage<T>(key: string): Automerge.Doc<T> | null {
+  const base64 = localStorage.getItem(key)
+  if (!base64) return null
+  
+  const binary = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+  return Automerge.load<T>(binary)
+}
+
+// Usage
+let doc = Automerge.from({ todos: [] })
+
+doc = Automerge.change(doc, d => {
+  d.todos.push({ text: "Buy milk", done: false })
+})
+
+saveToLocalStorage(doc, "my-todos")
+
+// Later, reload
+const restored = loadFromLocalStorage("my-todos")
+if (restored) {
+  console.log(restored.todos)
+}
+```
+
+## Working with changes directly
+
+For fine-grained control, you can work with individual changes:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.from({ x: 1 })
+let doc2 = Automerge.init<{ x: number }>()
+
+// Get all changes from doc1
+const changes = Automerge.getAllChanges(doc1)
+
+// Apply them to doc2
+;[doc2] = Automerge.applyChanges(doc2, changes)
+
+console.log(doc2.x) // 1
+```
+
+### Getting changes between versions
+
+```typescript
+let doc = Automerge.from({ count: 0 })
+
+// Remember this version
+const oldDoc = doc
+
+// Make some changes
+doc = Automerge.change(doc, d => { d.count = 1 })
+doc = Automerge.change(doc, d => { d.count = 2 })
+
+// Get changes between versions
+const changes = Automerge.getChanges(oldDoc, doc)
+
+console.log(changes.length) // 2 changes
+```
+
+## Handling patch callbacks during load
+
+You can receive notifications as a document is loaded:
+
+```typescript
+const patchCallback = (patches, info) => {
+  console.log("Loading patches:", patches)
+  console.log("Source:", info.source) // "loadIncremental"
+}
+
+let doc = Automerge.init({ patchCallback })
+doc = Automerge.loadIncremental(doc, binary, { patchCallback })
+```
+
+## Binary format details
+
+- The binary format is **deterministic**: saving the same document produces identical bytes
+- It uses **columnar compression** for efficiency
+- Includes **complete history**: all changes since document creation
+- Is **forward compatible**: newer versions can read older formats
+
+<Warning>
+The binary format may change between major versions of Automerge. Always use the same major version to save and load documents.
+</Warning>
+
+## Best practices
+
+<Tip>
+**Use saveIncremental for real-time sync**: Send incremental changes to other peers rather than the full document.
+</Tip>
+
+<Tip>
+**Compact periodically**: Use `save()` periodically to compact the document and reduce storage size.
+</Tip>
+
+<Tip>
+**Store binary data**: Store the `Uint8Array` directly rather than converting to Base64 when possible (e.g., in IndexedDB).
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Syncing Documents" icon="arrows-rotate" href="/guides/syncing-documents">
+    Learn the sync protocol for real-time collaboration
+  </Card>
+  <Card title="Working with Text" icon="text" href="/guides/working-with-text">
+    Handle collaborative text editing
+  </Card>
+</CardGroup>

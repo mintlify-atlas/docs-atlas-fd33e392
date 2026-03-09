@@ -1,0 +1,428 @@
+---
+title: Document Management
+description: Functions for creating, loading, saving, and managing Automerge documents
+---
+
+## init
+
+Create a new, empty Automerge document.
+
+```typescript
+function init<T>(opts?: ActorId | InitOptions<T>): Doc<T>
+```
+
+<ParamField path="opts" type="ActorId | InitOptions<T>">
+  Either an actor ID string or an options object. If omitted, a random actor ID is generated.
+  
+  <Expandable title="InitOptions<T>">
+    <ParamField path="actor" type="ActorId">
+      The actor ID to use for this document
+    </ParamField>
+    <ParamField path="freeze" type="boolean">
+      Whether to freeze the document (makes it immutable via Object.freeze)
+    </ParamField>
+    <ParamField path="patchCallback" type="PatchCallback<T>">
+      Callback to receive patches when the document is initialized
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="return" type="Doc<T>">
+  A new, empty Automerge document
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Basic Usage
+import * as Automerge from '@automerge/automerge'
+
+const doc = Automerge.init()
+```
+
+```typescript With Type
+type MyDoc = {
+  title: string
+  count: number
+}
+
+const doc = Automerge.init<MyDoc>()
+```
+
+```typescript With Actor ID
+const doc = Automerge.init({ actor: "user-123" })
+```
+
+```typescript With Patch Callback
+const doc = Automerge.init({
+  patchCallback: (patches, info) => {
+    console.log('Document initialized with patches:', patches)
+  }
+})
+```
+
+</CodeGroup>
+
+---
+
+## from
+
+Create an Automerge document from a plain JavaScript object.
+
+```typescript
+function from<T extends Record<string, unknown>>(
+  initialState: T | Doc<T>,
+  opts?: ActorId | InitOptions<T>
+): Doc<T>
+```
+
+<ParamField path="initialState" type="T | Doc<T>" required>
+  The initial state to populate the document with
+</ParamField>
+
+<ParamField path="opts" type="ActorId | InitOptions<T>">
+  Actor ID or initialization options
+</ParamField>
+
+<ResponseField name="return" type="Doc<T>">
+  A new Automerge document containing the initial state
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Simple Object
+const doc = Automerge.from({
+  title: "Shopping List",
+  items: ["eggs", "milk", "bread"]
+})
+```
+
+```typescript Nested Structure
+const doc = Automerge.from({
+  user: {
+    name: "Alice",
+    email: "alice@example.com"
+  },
+  settings: {
+    theme: "dark",
+    notifications: true
+  }
+})
+```
+
+```typescript With Actor ID
+const doc = Automerge.from(
+  { title: "My Doc" },
+  { actor: "user-456" }
+)
+```
+
+</CodeGroup>
+
+---
+
+## clone
+
+Make a full writable copy of an Automerge document.
+
+```typescript
+function clone<T>(
+  doc: Doc<T>,
+  opts?: ActorId | InitOptions<T>
+): Doc<T>
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document to clone
+</ParamField>
+
+<ParamField path="opts" type="ActorId | InitOptions<T>">
+  Actor ID or options for the new document. A new random actor ID is generated if not provided.
+</ParamField>
+
+<ResponseField name="return" type="Doc<T>">
+  A new, independent copy of the document with a different actor ID
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Basic Clone
+let doc1 = Automerge.from({ counter: 0 })
+let doc2 = Automerge.clone(doc1)
+
+// Both can now be modified independently
+doc1 = Automerge.change(doc1, d => d.counter++)
+doc2 = Automerge.change(doc2, d => d.counter += 10)
+```
+
+```typescript Clone with Actor ID
+const doc1 = Automerge.from({ data: "original" })
+const doc2 = Automerge.clone(doc1, { actor: "replica-1" })
+```
+
+```typescript Merge Pattern
+let doc1 = Automerge.from({ value: 1 })
+let doc2 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => d.value = 2)
+doc2 = Automerge.change(doc2, d => d.value = 3)
+
+// Merge changes back
+const merged = Automerge.merge(doc1, doc2)
+```
+
+</CodeGroup>
+
+<Note>
+  Unlike `view()`, `clone()` creates a full copy of the document's memory and generates a new actor ID. This allows the cloned document to be modified independently.
+</Note>
+
+---
+
+## merge
+
+Merge changes from one document into another.
+
+```typescript
+function merge<T>(local: Doc<T>, remote: Doc<T>): Doc<T>
+```
+
+<ParamField path="local" type="Doc<T>" required>
+  The document to merge changes into
+</ParamField>
+
+<ParamField path="remote" type="Doc<T>" required>
+  The document to merge changes from
+</ParamField>
+
+<ResponseField name="return" type="Doc<T>">
+  The merged document containing changes from both documents
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Basic Merge
+let doc1 = Automerge.from({ items: [] })
+let doc2 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => d.items.push("apple"))
+doc2 = Automerge.change(doc2, d => d.items.push("banana"))
+
+const merged = Automerge.merge(doc1, doc2)
+// merged.items is ["apple", "banana"]
+```
+
+```typescript Conflict Resolution
+let doc1 = Automerge.from({ title: "Original" })
+let doc2 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => d.title = "Version A")
+doc2 = Automerge.change(doc2, d => d.title = "Version B")
+
+const merged = Automerge.merge(doc1, doc2)
+// merged.title is deterministically one of the values
+
+// Check for conflicts
+const conflicts = Automerge.getConflicts(merged, "title")
+console.log(conflicts) // { hash1: "Version A", hash2: "Version B" }
+```
+
+</CodeGroup>
+
+<Warning>
+  After merging, both `local` and `remote` documents are frozen and cannot be modified. Clone them first if you need to continue making changes.
+</Warning>
+
+---
+
+## load
+
+Load an Automerge document from compressed binary data.
+
+```typescript
+function load<T>(
+  data: Uint8Array,
+  opts?: ActorId | InitOptions<T>
+): Doc<T>
+```
+
+<ParamField path="data" type="Uint8Array" required>
+  The compressed document data from `save()`
+</ParamField>
+
+<ParamField path="opts" type="ActorId | InitOptions<T>">
+  Actor ID or initialization options for the loaded document
+</ParamField>
+
+<ResponseField name="return" type="Doc<T>">
+  The loaded document
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Save and Load
+let doc = Automerge.from({ title: "My Document" })
+
+// Save to binary
+const binary = Automerge.save(doc)
+
+// Load from binary
+const loaded = Automerge.load<typeof doc>(binary)
+```
+
+```typescript Load with Patch Callback
+const binary = Automerge.save(doc)
+
+const loaded = Automerge.load(binary, {
+  patchCallback: (patches, info) => {
+    console.log('Document loaded:', patches)
+  }
+})
+```
+
+</CodeGroup>
+
+<Warning>
+  `load()` will throw an error if the data is incomplete. Use `init()` followed by `loadIncremental()` if you need to handle incomplete data.
+</Warning>
+
+---
+
+## save
+
+Export a document to compressed binary format.
+
+```typescript
+function save<T>(doc: Doc<T>): Uint8Array
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document to save
+</ParamField>
+
+<ResponseField name="return" type="Uint8Array">
+  Compressed binary representation of the entire document
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Save to File
+import * as fs from 'fs'
+
+const doc = Automerge.from({ title: "My Doc" })
+const binary = Automerge.save(doc)
+
+fs.writeFileSync('document.automerge', binary)
+```
+
+```typescript Save to LocalStorage
+const doc = Automerge.from({ data: "example" })
+const binary = Automerge.save(doc)
+
+// Convert to base64 for storage
+const base64 = btoa(String.fromCharCode(...binary))
+localStorage.setItem('doc', base64)
+```
+
+</CodeGroup>
+
+---
+
+## free
+
+Explicitly free the memory backing a document.
+
+```typescript
+function free<T>(doc: Doc<T>): void
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document to free
+</ParamField>
+
+### Examples
+
+```typescript
+let doc = Automerge.from({ data: "large document" })
+
+// Use the document...
+
+// Free memory when done
+Automerge.free(doc)
+```
+
+<Note>
+  This is not necessary in environments that support `FinalizationRegistry`, where garbage collection will handle cleanup automatically. Only use this in memory-constrained environments or when you need immediate cleanup.
+</Note>
+
+---
+
+## view
+
+Create an immutable view of a document at a specific point in history.
+
+```typescript
+function view<T>(doc: Doc<T>, heads: Heads): Doc<T>
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document to create a view of
+</ParamField>
+
+<ParamField path="heads" type="Heads" required>
+  The hashes of the heads to view the document at
+</ParamField>
+
+<ResponseField name="return" type="Doc<T>">
+  An immutable view of the document at the specified heads
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript View Past State
+let doc = Automerge.from({ value: 1 })
+const heads1 = Automerge.getHeads(doc)
+
+doc = Automerge.change(doc, d => d.value = 2)
+doc = Automerge.change(doc, d => d.value = 3)
+
+// View the document as it was at heads1
+const pastView = Automerge.view(doc, heads1)
+console.log(pastView.value) // 1
+```
+
+```typescript Compare Versions
+const heads1 = Automerge.getHeads(doc)
+doc = Automerge.change(doc, d => d.items.push("new"))
+
+const before = Automerge.view(doc, heads1)
+const patches = Automerge.diff(doc, heads1, Automerge.getHeads(doc))
+```
+
+</CodeGroup>
+
+<Note>
+  Views are cheap, shallow copies that share memory with the original document. They cannot be passed to `change()`. Use `clone()` if you need a writable copy.
+</Note>
+
+---
+
+## Related Functions
+
+- `getActorId<T>(doc: Doc<T>): ActorId` - Get the actor ID of a document
+- `getHeads<T>(doc: Doc<T>): Heads` - Get the current heads of a document
+- `isAutomerge(doc: unknown): boolean` - Check if a value is an Automerge document
+- `getObjectId(doc: any): ObjID | null` - Get the object ID of a value

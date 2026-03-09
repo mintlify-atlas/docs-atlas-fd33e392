@@ -1,0 +1,581 @@
+---
+title: 'Building a Collaborative Text Editor'
+description: 'Create a real-time collaborative text editor with rich formatting using Automerge'
+icon: 'pen-to-square'
+---
+
+# Building a Collaborative Text Editor
+
+Build a Google Docs-style collaborative text editor with Automerge. This guide covers text editing, formatting with marks, and handling concurrent edits from multiple users.
+
+## What You'll Build
+
+A text editor that supports:
+- Concurrent text editing by multiple users
+- Rich text formatting (bold, italic, links)
+- Automatic conflict resolution
+- Cursor position tracking
+- Real-time synchronization
+
+## Text in Automerge
+
+Automerge stores text as strings that support character-level operations. Unlike regular strings, Automerge text can be collaboratively edited with automatic conflict resolution.
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type Document = {
+  title: string
+  content: string
+}
+```
+
+<Note>
+Automerge text is stored as regular strings. Use `splice()` for efficient text editing and `mark()` for formatting.
+</Note>
+
+## Implementation
+
+<Steps>
+  <Step title="Initialize the Document">
+    Create a document with text content:
+
+    ```typescript
+    let doc = Automerge.init<Document>("editor-user-1")
+
+    doc = Automerge.change(doc, "Initialize document", d => {
+      d.title = "Untitled Document"
+      d.content = ""
+    })
+
+    // Add some initial content
+    doc = Automerge.change(doc, "Add content", d => {
+      d.content = "Hello, world!"
+    })
+
+    console.log(doc.content)
+    // Output: "Hello, world!"
+    ```
+  </Step>
+
+  <Step title="Insert and Delete Text">
+    Use `splice()` to modify text efficiently:
+
+    ```typescript
+    // Insert text at a position
+    doc = Automerge.change(doc, "Insert text", d => {
+      // Insert "beautiful " at position 7 (after "Hello, ")
+      Automerge.splice(d, ["content"], 7, 0, "beautiful ")
+    })
+
+    console.log(doc.content)
+    // Output: "Hello, beautiful world!"
+
+    // Delete text
+    doc = Automerge.change(doc, "Delete text", d => {
+      // Delete 10 characters starting at position 7
+      Automerge.splice(d, ["content"], 7, 10)
+    })
+
+    console.log(doc.content)
+    // Output: "Hello, world!"
+
+    // Replace text
+    doc = Automerge.change(doc, "Replace text", d => {
+      // Delete 5 characters and insert new text
+      Automerge.splice(d, ["content"], 0, 5, "Greetings")
+    })
+
+    console.log(doc.content)
+    // Output: "Greetings, world!"
+    ```
+
+    <Tip>
+    The `splice()` function takes a path to the text property, start position, number of characters to delete, and optional text to insert.
+    </Tip>
+  </Step>
+
+  <Step title="Handle Concurrent Text Edits">
+    See how Automerge merges simultaneous edits:
+
+    ```typescript
+    // Two users start with the same document
+    let doc1 = Automerge.from<Document>({
+      title: "Shared Doc",
+      content: "The quick fox jumps over the lazy dog"
+    }, "user-alice")
+
+    let doc2 = Automerge.clone(doc1, "user-bob")
+
+    // Alice adds "brown " before "fox"
+    doc1 = Automerge.change(doc1, "Alice's edit", d => {
+      Automerge.splice(d, ["content"], 10, 0, "brown ")
+    })
+
+    // Bob adds "very " before "lazy"
+    doc2 = Automerge.change(doc2, "Bob's edit", d => {
+      Automerge.splice(d, ["content"], 29, 0, "very ")
+    })
+
+    // Merge their changes
+    const merged = Automerge.merge(doc1, doc2)
+
+    console.log(merged.content)
+    // Output: "The quick brown fox jumps over the very lazy dog"
+    // Both edits are preserved!
+    ```
+
+    <Note>
+    Automerge uses operational transformation to merge concurrent text edits. Position-based operations are automatically adjusted when merged.
+    </Note>
+  </Step>
+
+  <Step title="Add Rich Text Formatting">
+    Use marks to add formatting like bold, italic, and links:
+
+    ```typescript
+    doc = Automerge.from<Document>({
+      title: "Formatted Doc",
+      content: "The quick fox jumps over the lazy dog"
+    })
+
+    // Make "quick fox" bold
+    doc = Automerge.change(doc, "Add bold", d => {
+      Automerge.mark(
+        d,
+        ["content"],
+        { start: 4, end: 13, expand: "none" },
+        "font-weight",
+        "bold"
+      )
+    })
+
+    // Make "lazy dog" italic
+    doc = Automerge.change(doc, "Add italic", d => {
+      Automerge.mark(
+        d,
+        ["content"],
+        { start: 29, end: 37, expand: "none" },
+        "font-style",
+        "italic"
+      )
+    })
+
+    // Get all marks in the document
+    const marks = Automerge.marks(doc, ["content"])
+    console.log(marks)
+    // Output: [
+    //   { name: "font-weight", value: "bold", start: 4, end: 13 },
+    //   { name: "font-style", value: "italic", start: 29, end: 37 }
+    // ]
+
+    // Get marks at a specific position
+    const marksAt10 = Automerge.marksAt(doc, ["content"], 10)
+    console.log(marksAt10)
+    // Output: { "font-weight": "bold" }
+    ```
+
+    <Tip>
+    The `expand` parameter controls whether marks expand when text is inserted at their boundaries:
+    - `"none"`: Don't expand
+    - `"before"`: Expand when inserting at start
+    - `"after"`: Expand when inserting at end
+    - `"both"`: Expand on both sides
+    </Tip>
+  </Step>
+
+  <Step title="Update Text Efficiently">
+    Use `updateText()` to replace entire text while preserving marks:
+
+    ```typescript
+    doc = Automerge.from<Document>({
+      title: "My Document",
+      content: "Hello world"
+    }, "user-alice")
+
+    // Add formatting
+    doc = Automerge.change(doc, d => {
+      Automerge.mark(
+        d,
+        ["content"],
+        { start: 0, end: 5, expand: "none" },
+        "font-weight",
+        "bold"
+      )
+    })
+
+    // Update the text (will try to preserve marks)
+    doc = Automerge.change(doc, d => {
+      Automerge.updateText(d, ["content"], "Hello friends")
+    })
+
+    console.log(doc.content)
+    // Output: "Hello friends"
+
+    const marks = Automerge.marks(doc, ["content"])
+    console.log(marks)
+    // The "Hello" part still has bold formatting!
+    ```
+
+    <Note>
+    `updateText()` uses a diff algorithm to minimize changes and preserve as much formatting as possible.
+    </Note>
+  </Step>
+
+  <Step title="Remove Formatting">
+    Use `unmark()` to remove formatting:
+
+    ```typescript
+    // Remove bold from "quick"
+    doc = Automerge.change(doc, "Remove bold", d => {
+      Automerge.unmark(
+        d,
+        ["content"],
+        { start: 4, end: 9 },
+        "font-weight"
+      )
+    })
+
+    const marks = Automerge.marks(doc, ["content"])
+    console.log(marks)
+    // The bold mark is now split around the unmarked region
+    ```
+  </Step>
+
+  <Step title="Track Formatting in Patches">
+    Listen to patches to update your UI with formatting:
+
+    ```typescript
+    let doc = Automerge.init<Document>({
+      patchCallback: (patches, info) => {
+        patches.forEach(patch => {
+          if (patch.action === "mark") {
+            console.log("Formatting changed:", patch.marks)
+          } else if (patch.action === "splice") {
+            console.log("Text inserted at:", patch.path)
+            if (patch.marks) {
+              console.log("With formatting:", patch.marks)
+            }
+          }
+        })
+      }
+    })
+
+    doc = Automerge.change(doc, d => {
+      d.content = "Hello"
+    })
+
+    doc = Automerge.change(doc, d => {
+      Automerge.mark(
+        d,
+        ["content"],
+        { start: 0, end: 5, expand: "both" },
+        "font-weight",
+        "bold"
+      )
+    })
+
+    // Insert text - the patch will show it inherits the bold mark
+    doc = Automerge.change(doc, d => {
+      Automerge.splice(d, ["content"], 5, 0, " World")
+    })
+    ```
+  </Step>
+
+  <Step title="Handle Multi-byte Characters">
+    Automerge correctly handles Unicode and emoji:
+
+    ```typescript
+    doc = Automerge.from<Document>({
+      title: "Emoji Doc",
+      content: "😀😀😀"
+    })
+
+    // Mark the second emoji as bold
+    doc = Automerge.change(doc, d => {
+      // Each emoji is 2 code units
+      Automerge.mark(
+        d,
+        ["content"],
+        { start: 2, end: 4, expand: "none" },
+        "font-weight",
+        "bold"
+      )
+    })
+
+    const marks = Automerge.marks(doc, ["content"])
+    console.log(marks)
+    // Output: [{ name: "font-weight", value: "bold", start: 2, end: 4 }]
+
+    // Insert another emoji at the beginning
+    doc = Automerge.change(doc, d => {
+      Automerge.splice(d, ["content"], 0, 0, "🙃")
+    })
+
+    const updatedMarks = Automerge.marks(doc, ["content"])
+    console.log(updatedMarks)
+    // Mark positions automatically adjusted!
+    // Output: [{ name: "font-weight", value: "bold", start: 4, end: 6 }]
+    ```
+
+    <Tip>
+    Positions in Automerge text are measured in UTF-16 code units, the same as JavaScript strings.
+    </Tip>
+  </Step>
+</Steps>
+
+## Complete Example
+
+Here's a full collaborative text editor implementation:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type EditorDoc = {
+  title: string
+  content: string
+}
+
+type Mark = {
+  name: string
+  value: Automerge.MarkValue
+}
+
+class CollaborativeEditor {
+  private doc: Automerge.Doc<EditorDoc>
+  private actorId: string
+  private onChange: (doc: EditorDoc) => void
+
+  constructor(actorId: string, onChange: (doc: EditorDoc) => void) {
+    this.actorId = actorId
+    this.onChange = onChange
+
+    this.doc = Automerge.init<EditorDoc>(actorId, {
+      patchCallback: (patches, info) => {
+        this.onChange(this.doc)
+      }
+    })
+
+    this.doc = Automerge.change(this.doc, "Initialize", d => {
+      d.title = "Untitled Document"
+      d.content = ""
+    })
+  }
+
+  // Insert text at cursor position
+  insertText(position: number, text: string) {
+    this.doc = Automerge.change(
+      this.doc,
+      `Insert "${text}" at ${position}`,
+      d => {
+        Automerge.splice(d, ["content"], position, 0, text)
+      }
+    )
+  }
+
+  // Delete text range
+  deleteText(start: number, length: number) {
+    this.doc = Automerge.change(
+      this.doc,
+      `Delete ${length} chars at ${start}`,
+      d => {
+        Automerge.splice(d, ["content"], start, length)
+      }
+    )
+  }
+
+  // Replace entire text efficiently
+  setText(text: string) {
+    this.doc = Automerge.change(this.doc, "Update text", d => {
+      Automerge.updateText(d, ["content"], text)
+    })
+  }
+
+  // Apply formatting to a range
+  format(
+    start: number,
+    end: number,
+    formatName: string,
+    value: Automerge.MarkValue,
+    expand: "none" | "before" | "after" | "both" = "none"
+  ) {
+    this.doc = Automerge.change(
+      this.doc,
+      `Format ${formatName} from ${start} to ${end}`,
+      d => {
+        Automerge.mark(
+          d,
+          ["content"],
+          { start, end, expand },
+          formatName,
+          value
+        )
+      }
+    )
+  }
+
+  // Remove formatting from a range
+  removeFormat(start: number, end: number, formatName: string) {
+    this.doc = Automerge.change(
+      this.doc,
+      `Remove ${formatName} from ${start} to ${end}`,
+      d => {
+        Automerge.unmark(d, ["content"], { start, end }, formatName)
+      }
+    )
+  }
+
+  // Get all marks in the document
+  getMarks(): Automerge.Mark[] {
+    return Automerge.marks(this.doc, ["content"])
+  }
+
+  // Get formatting at a specific position
+  getFormattingAt(position: number): Record<string, Automerge.MarkValue> {
+    return Automerge.marksAt(this.doc, ["content"], position)
+  }
+
+  // Update document title
+  setTitle(title: string) {
+    this.doc = Automerge.change(this.doc, "Update title", d => {
+      d.title = title
+    })
+  }
+
+  // Get current content
+  getContent(): string {
+    return this.doc.content
+  }
+
+  // Get current title
+  getTitle(): string {
+    return this.doc.title
+  }
+
+  // Merge with another editor's document
+  merge(otherDoc: Automerge.Doc<EditorDoc>) {
+    this.doc = Automerge.merge(this.doc, otherDoc)
+  }
+
+  // Get the document for sharing
+  getDoc(): Automerge.Doc<EditorDoc> {
+    return this.doc
+  }
+
+  // Save to binary
+  save(): Uint8Array {
+    return Automerge.save(this.doc)
+  }
+
+  // Load from binary
+  load(binary: Uint8Array) {
+    this.doc = Automerge.load<EditorDoc>(binary, this.actorId)
+    this.onChange(this.doc)
+  }
+}
+
+// Usage Example
+function main() {
+  // Alice's editor
+  const alice = new CollaborativeEditor("alice", doc => {
+    console.log("Alice's doc updated:", doc.content)
+  })
+
+  alice.insertText(0, "Hello, world!")
+  alice.format(0, 5, "font-weight", "bold", "none")
+  alice.format(7, 12, "font-style", "italic", "none")
+
+  // Bob's editor starts with Alice's state
+  const bob = new CollaborativeEditor("bob", doc => {
+    console.log("Bob's doc updated:", doc.content)
+  })
+  bob.merge(alice.getDoc())
+
+  // Bob makes an edit
+  bob.insertText(5, " beautiful")
+  bob.format(6, 15, "text-decoration", "underline", "none")
+
+  // Alice merges Bob's changes
+  alice.merge(bob.getDoc())
+
+  console.log("Final content:", alice.getContent())
+  // Output: "Hello beautiful, world!"
+
+  console.log("Marks:", alice.getMarks())
+  // Shows all formatting: bold, italic, and underline
+}
+
+main()
+```
+
+## Building a UI
+
+Here's how to integrate with a React component:
+
+```typescript jsx
+import React, { useState, useEffect, useRef } from 'react'
+import * as Automerge from '@automerge/automerge'
+
+function TextEditor({ actorId, initialDoc }) {
+  const [doc, setDoc] = useState(initialDoc)
+  const editorRef = useRef<CollaborativeEditor>(null)
+
+  useEffect(() => {
+    editorRef.current = new CollaborativeEditor(actorId, setDoc)
+    if (initialDoc) {
+      editorRef.current.merge(initialDoc)
+    }
+  }, [])
+
+  const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
+    const text = e.currentTarget.textContent || ''
+    editorRef.current?.setText(text)
+  }
+
+  const toggleBold = () => {
+    const selection = window.getSelection()
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0)
+      editorRef.current?.format(
+        range.startOffset,
+        range.endOffset,
+        'font-weight',
+        'bold'
+      )
+    }
+  }
+
+  return (
+    <div>
+      <button onClick={toggleBold}>Bold</button>
+      <div
+        contentEditable
+        onInput={handleInput}
+        suppressContentEditableWarning
+      >
+        {doc.content}
+      </div>
+    </div>
+  )
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Real-time Sync" icon="rotate" href="/examples/real-time-sync">
+    Sync your editor across the network
+  </Card>
+  <Card title="Text API" icon="book" href="/api/text">
+    Learn about text manipulation functions
+  </Card>
+</CardGroup>
+
+## Key Takeaways
+
+- Use `splice()` for efficient text insertion and deletion
+- `mark()` and `unmark()` add and remove formatting
+- Marks have start/end positions and can expand
+- `updateText()` preserves formatting when replacing text
+- Concurrent text edits are automatically merged
+- Patches notify you of text and formatting changes

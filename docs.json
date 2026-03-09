@@ -1,122 +1,124 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Automerge",
+  "theme": "palm",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#f7c833",
+    "light": "#8c742c",
+    "dark": "#2c2a24"
   },
   "favicon": "/favicon.svg",
+  "logo": {
+    "light": "https://media.brand.dev/71737a8b-35e7-4135-9f29-4a653d4e9a82.svg",
+    "dark": "https://media.brand.dev/71737a8b-35e7-4135-9f29-4a653d4e9a82.svg"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/automerge/automerge"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/automerge/automerge"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/crdts",
+              "concepts/documents",
+              "concepts/changes",
+              "concepts/merging",
+              "concepts/conflicts",
+              "concepts/sync"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Guides",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "guides/creating-documents",
+              "guides/making-changes",
+              "guides/syncing-documents",
+              "guides/save-and-load",
+              "guides/working-with-text",
+              "guides/marks-and-formatting",
+              "guides/cursors",
+              "guides/conflict-resolution"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Advanced",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "advanced/actor-ids",
+              "advanced/cloning",
+              "advanced/viewing-history",
+              "advanced/patches",
+              "advanced/performance"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "JavaScript API",
             "pages": [
-              "api-reference/introduction"
+              "api/overview",
+              "api/documents",
+              "api/changes",
+              "api/sync",
+              "api/text",
+              "api/marks",
+              "api/cursors",
+              "api/types"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Rust API",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/rust/overview",
+              "api/rust/getting-started"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Resources",
+        "groups": [
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/todo-list",
+              "examples/collaborative-editor",
+              "examples/real-time-sync"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/bundlers",
+              "reference/binary-format",
+              "reference/migration-guide",
+              "reference/changelog"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

@@ -1,0 +1,164 @@
+---
+title: JavaScript API Overview
+description: Overview of the Automerge JavaScript API and import patterns
+---
+
+## Installation
+
+```bash
+npm install @automerge/automerge
+```
+
+## Importing Automerge
+
+Automerge provides multiple import patterns depending on your needs:
+
+<CodeGroup>
+
+```typescript ES Modules
+import * as Automerge from '@automerge/automerge'
+
+// Create a document
+let doc = Automerge.init()
+```
+
+```typescript Named Imports
+import { init, change, clone, merge } from '@automerge/automerge'
+
+// Create a document
+let doc = init()
+```
+
+```typescript TypeScript
+import * as Automerge from '@automerge/automerge'
+import type { Doc, Counter } from '@automerge/automerge'
+
+type MyDoc = {
+  title: string
+  counter: Counter
+  items: string[]
+}
+
+let doc: Doc<MyDoc> = Automerge.init()
+```
+
+</CodeGroup>
+
+## Core Concepts
+
+### Documents
+
+Automerge documents are immutable. Every change creates a new version:
+
+```typescript
+let doc1 = Automerge.init()
+doc1 = Automerge.change(doc1, d => {
+  d.key = "value"
+})
+```
+
+### Type Safety
+
+Automerge supports full TypeScript typing:
+
+```typescript
+type TodoList = {
+  items: Array<{ text: string; done: boolean }>
+}
+
+let doc = Automerge.init<TodoList>()
+doc = Automerge.change(doc, d => {
+  d.items = []
+  d.items.push({ text: "Write docs", done: false })
+})
+```
+
+### Actor IDs
+
+Each document has an actor ID that identifies the origin of changes:
+
+```typescript
+// Random actor ID
+let doc1 = Automerge.init()
+
+// Explicit actor ID
+let doc2 = Automerge.init({ actor: "user-123" })
+
+// Get the actor ID
+const actorId = Automerge.getActorId(doc2) // "user-123"
+```
+
+## API Organization
+
+The Automerge API is organized into several categories:
+
+### Document Management
+- **[Documents](/api/documents)** - Creating, loading, and saving documents
+- **[Changes](/api/changes)** - Making and applying changes to documents
+
+### Synchronization
+- **[Sync](/api/sync)** - Syncing documents between peers
+
+### Text Editing
+- **[Text](/api/text)** - Working with text sequences
+- **[Marks](/api/marks)** - Rich text formatting with marks
+- **[Cursors](/api/cursors)** - Position tracking in text
+
+### Type Definitions
+- **[Types](/api/types)** - Core TypeScript types and interfaces
+
+## Common Patterns
+
+### Creating a Document from Data
+
+```typescript
+const doc = Automerge.from({
+  title: "My Document",
+  items: ["one", "two", "three"]
+})
+```
+
+### Making Changes
+
+```typescript
+doc = Automerge.change(doc, "Add item", d => {
+  d.items.push("four")
+})
+```
+
+### Merging Documents
+
+```typescript
+let doc1 = Automerge.from({ name: "Alice" })
+let doc2 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => d.age = 30)
+doc2 = Automerge.change(doc2, d => d.city = "NYC")
+
+const merged = Automerge.merge(doc1, doc2)
+// merged now has: { name: "Alice", age: 30, city: "NYC" }
+```
+
+### Patch Callbacks
+
+Listen to changes as they happen:
+
+```typescript
+const patchCallback = (patches, info) => {
+  console.log("Changes:", patches)
+  console.log("Before:", info.before)
+  console.log("After:", info.after)
+}
+
+doc = Automerge.change(doc, { patchCallback }, d => {
+  d.counter = new Automerge.Counter()
+  d.counter.increment(5)
+})
+```
+
+## Next Steps
+
+- Learn about [creating and managing documents](/api/documents)
+- Understand how to [make changes](/api/changes) to documents
+- Explore [synchronization](/api/sync) for multi-peer collaboration
+- Work with [text editing](/api/text) features

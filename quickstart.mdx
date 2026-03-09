@@ -1,80 +1,397 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Build your first local-first collaborative application with Automerge
 ---
 
-## Get started in three steps
+This guide will walk you through creating your first Automerge application. You'll learn how to create documents, make changes, handle concurrent edits, and merge changes from multiple sources.
 
-Get your documentation site running locally and make your first customization.
+<Note>
+Before starting, make sure you've [installed Automerge](/installation) and configured your bundler if working in a browser environment.
+</Note>
 
-### Step 1: Set up your local environment
+## Creating Your First Document
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Steps>
 
-### Step 2: Deploy your changes
+<Step title="Initialize a document">
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+Create a new Automerge document using `init()` or `from()`. Documents are immutable, so each change returns a new document:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+```typescript
+import * as Automerge from "@automerge/automerge"
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+// Create an empty document
+let doc = Automerge.init()
 
-### Step 3: Go live
+// Or create from existing data
+let doc2 = Automerge.from({
+  tasks: [
+    { description: "feed fish", done: false },
+    { description: "water plants", done: false }
+  ]
+})
+```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+<Tip>
+Use TypeScript generics to get full type safety: `Automerge.init<YourType>()`
+</Tip>
 
-## Next steps
+</Step>
 
-Now that you have your docs running, explore these key features:
+<Step title="Make changes to the document">
+
+Use `change()` to modify documents. Pass a function that receives a mutable proxy of the document:
+
+```typescript
+type TodoList = {
+  tasks: Array<{ description: string; done: boolean }>
+}
+
+let doc = Automerge.from<TodoList>({
+  tasks: [
+    { description: "feed fish", done: false },
+    { description: "water plants", done: false }
+  ]
+})
+
+// Make a change
+doc = Automerge.change(doc, d => {
+  d.tasks[0].done = true
+})
+
+console.log(doc.tasks[0].done) // true
+```
+
+</Step>
+
+<Step title="Add a commit message (optional)">
+
+Include descriptive messages with your changes for better debugging and history tracking:
+
+```typescript
+doc = Automerge.change(doc, "Complete first task", d => {
+  d.tasks[0].done = true
+})
+
+// Or with more options
+doc = Automerge.change(doc, {
+  message: "Add new task",
+  time: Math.floor(Date.now() / 1000)
+}, d => {
+  d.tasks.push({ description: "buy groceries", done: false })
+})
+```
+
+</Step>
+
+</Steps>
+
+## Working with Concurrent Changes
+
+The power of Automerge comes from handling concurrent edits automatically. Here's how multiple users can work on the same document:
+
+<Steps>
+
+<Step title="Create independent copies">
+
+Use `clone()` to create independent copies that can diverge:
+
+```typescript
+let doc1 = Automerge.from({
+  tasks: [
+    { description: "feed fish", done: false },
+    { description: "water plants", done: false }
+  ]
+})
+
+// Create a second thread of execution
+let doc2 = Automerge.clone(doc1)
+```
+
+<Warning>
+You cannot call `change()` on a document that has been modified without cloning it first. This prevents accidental conflicts and ensures data consistency.
+</Warning>
+
+</Step>
+
+<Step title="Make concurrent changes">
+
+Both documents can now be modified independently:
+
+```typescript
+// User 1 completes a task
+doc1 = Automerge.change(doc1, d => {
+  d.tasks[0].done = true
+})
+
+// User 2 adds a new task (at the same time)
+doc2 = Automerge.change(doc2, d => {
+  d.tasks.push({ description: "water fish", done: false })
+})
+
+// At this point, doc1 and doc2 have diverged
+```
+
+</Step>
+
+<Step title="Merge the changes">
+
+Automerge automatically reconciles concurrent changes:
+
+```typescript
+// Merge doc2's changes into doc1
+doc1 = Automerge.merge(doc1, doc2)
+
+// Merge doc1's changes into doc2
+doc2 = Automerge.merge(doc2, doc1)
+
+// Both documents now have identical content
+console.log(doc1)
+// {
+//   tasks: [
+//     { description: "feed fish", done: true },
+//     { description: "water plants", done: false },
+//     { description: "water fish", done: false }
+//   ]
+// }
+```
+
+<Note>
+After merging, both documents contain all changes from both sources. The merge is deterministic and conflict-free for most operations.
+</Note>
+
+</Step>
+
+</Steps>
+
+## Complete Working Example
+
+Here's a complete example demonstrating the full workflow:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// Define your document type
+type TodoDoc = {
+  tasks: Array<{
+    description: string
+    done: boolean
+  }>
+  owner?: string
+}
+
+// Initialize the first document
+let doc1 = Automerge.from<TodoDoc>({
+  tasks: [
+    { description: "feed fish", done: false },
+    { description: "water plants", done: false }
+  ]
+})
+
+// Simulate a second user/device
+let doc2 = Automerge.clone(doc1)
+
+// User 1: Complete a task
+doc1 = Automerge.change(doc1, "Complete first task", d => {
+  d.tasks[0].done = true
+  d.owner = "Alice"
+})
+
+// User 2: Add a new task (concurrent with User 1's change)
+doc2 = Automerge.change(doc2, "Add new task", d => {
+  d.tasks.push({ description: "water fish", done: false })
+  d.owner = "Bob"
+})
+
+// Merge changes from both users
+doc1 = Automerge.merge(doc1, doc2)
+doc2 = Automerge.merge(doc2, doc1)
+
+// Both documents are now identical
+console.log(doc1.tasks)
+// [
+//   { description: "feed fish", done: true },
+//   { description: "water plants", done: false },
+//   { description: "water fish", done: false }
+// ]
+
+// Note: owner will be either "Alice" or "Bob" (deterministic but arbitrary)
+console.log(doc1.owner === doc2.owner) // true
+```
+
+## Understanding Conflicts
+
+When two users modify the same property concurrently, Automerge chooses one value deterministically. You can inspect conflicts if needed:
+
+```typescript
+let doc1 = Automerge.init<{ name: string }>("user1")
+doc1 = Automerge.change(doc1, d => {
+  d.name = "Alice"
+})
+
+let doc2 = Automerge.clone(doc1)
+
+// Both users update the name concurrently
+doc1 = Automerge.change(doc1, d => { d.name = "Alice Smith" })
+doc2 = Automerge.change(doc2, d => { d.name = "Alice Jones" })
+
+// Merge the changes
+const doc3 = Automerge.merge(doc1, doc2)
+
+// One value is chosen, but you can see both
+console.log(doc3.name) // Either "Alice Smith" or "Alice Jones"
+
+const conflicts = Automerge.getConflicts(doc3, "name")
+console.log(conflicts) // Shows both conflicting values
+```
+
+<Note>
+For list operations (insertions, deletions), conflicts don't occur. Automerge uses CRDTs to intelligently merge list operations while preserving user intent.
+</Note>
+
+## Working with Special Data Types
+
+### Text Editing
+
+For collaborative text editing, use the `Text` type:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type Doc = {
+  notes: Automerge.Text
+}
+
+let doc = Automerge.init<Doc>()
+doc = Automerge.change(doc, d => {
+  d.notes = new Automerge.Text("Hello world")
+})
+
+// Modify text
+doc = Automerge.change(doc, d => {
+  d.notes.insertAt(6, "beautiful ")
+  d.notes.deleteAt(0, 5)
+})
+
+console.log(doc.notes.toString()) // "beautiful world"
+```
+
+### Counters
+
+For numeric values that should be added/subtracted rather than overwritten:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type Doc = {
+  pageViews: Automerge.Counter
+}
+
+let doc = Automerge.init<Doc>()
+doc = Automerge.change(doc, d => {
+  d.pageViews = new Automerge.Counter(0)
+})
+
+// Increment the counter
+doc = Automerge.change(doc, d => {
+  d.pageViews.increment(1)
+})
+
+console.log(doc.pageViews.value) // 1
+```
+
+### Binary Data
+
+```typescript
+let doc = Automerge.from({
+  image: new Uint8Array([255, 216, 255]) // JPEG header
+})
+```
+
+## Saving and Loading Documents
+
+Persist documents to disk or send them over the network:
+
+```typescript
+// Save the entire document
+const binary = Automerge.save(doc)
+
+// Save to file (Node.js)
+import { writeFileSync } from "fs"
+writeFileSync("document.automerge", binary)
+
+// Load from binary
+import { readFileSync } from "fs"
+const loaded = Automerge.load<TodoDoc>(readFileSync("document.automerge"))
+```
+
+<Tip>
+For sending updates over the network, use the [sync protocol](/concepts/sync) which efficiently transmits only the changes, not the entire document.
+</Tip>
+
+## Common Patterns
+
+### Document Lifecycle Management
+
+<Warning>
+**Important**: After calling `change()` or `merge()`, the original document reference becomes invalid. Always use the returned document:
+</Warning>
+
+```typescript
+// ❌ Wrong - doc1 becomes invalid after change
+let doc1 = Automerge.init()
+let doc2 = Automerge.change(doc1, d => d.key = "value")
+// doc1 is now "out of date" - don't use it!
+
+// ✅ Correct - reassign to same variable
+let doc = Automerge.init()
+doc = Automerge.change(doc, d => d.key = "value")
+// doc is valid and up-to-date
+
+// ✅ Or clone before reusing
+let doc1 = Automerge.init()
+let doc2 = Automerge.change(Automerge.clone(doc1), d => d.key = "value")
+// Both doc1 and doc2 are valid
+```
+
+### Actor IDs
+
+Each document has an actor ID to distinguish changes from different sources:
+
+```typescript
+// Automerge generates a random ID by default
+let doc1 = Automerge.init()
+console.log(Automerge.getActorId(doc1)) // e.g., "a1b2c3d4..."
+
+// Or provide your own
+let doc2 = Automerge.init({ actor: "user-123" })
+console.log(Automerge.getActorId(doc2)) // "user-123"
+```
+
+<Warning>
+Actor IDs must be unique across all peers. Never reuse actor IDs across concurrent threads or different devices.
+</Warning>
+
+## Next Steps
+
+Now that you understand the basics, explore advanced features:
 
 <CardGroup cols={2}>
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
+<Card title="Sync Protocol" icon="arrows-rotate" href="/guides/syncing-documents">
+  Efficiently synchronize documents across devices and peers
 </Card>
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
+<Card title="API Reference" icon="code" href="/api/overview">
+  Explore the complete Automerge API
 </Card>
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
+<Card title="Working with Text" icon="text" href="/guides/working-with-text">
+  Learn about Text, Counter, and other CRDT types
 </Card>
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
+<Card title="Save and Load" icon="database" href="/guides/save-and-load">
+  Save and load documents from storage
 </Card>
 
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

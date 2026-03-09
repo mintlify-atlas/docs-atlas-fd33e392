@@ -1,0 +1,320 @@
+---
+title: Migration Guide
+description: Guide to migrating between major versions of Automerge
+---
+
+This guide covers breaking changes and migration steps when upgrading between major versions of Automerge.
+
+## Automerge 2.x to 3.x
+
+Automerge 3.0 introduces significant performance improvements and some breaking API changes.
+
+### Overview
+
+Automerge 3.0 is a major release that achieves approximately **10x reduction in memory usage** through columnar compression. Read the full announcement:
+
+<Card title="Automerge 3 Announcement" icon="rocket" href="https://automerge.org/blog/automerge-3/">
+  Learn about the 10x memory reduction and new features in Automerge 3
+</Card>
+
+### Key Improvements
+
+- **100x lower memory usage** - Columnar compression at runtime and on disk
+- **Predictable memory** - Memory usage correlates with document size
+- **Faster loading** - Improved decompression performance
+- **Better spans/marks API** - Enhanced rich text support
+
+### Breaking Changes
+
+<Warning>
+Automerge 3.x introduces breaking changes in both the Rust and JavaScript APIs. Review this section carefully before upgrading.
+</Warning>
+
+#### JavaScript API Changes
+
+**No major breaking changes** - The JavaScript API remains largely compatible. Most code should work without modification.
+
+**Recommended updates:**
+```javascript
+// Before (still works)
+const doc = Automerge.from({ text: "hello" })
+
+// After (recommended, no changes needed)
+const doc = Automerge.from({ text: "hello" })
+```
+
+#### Rust API Changes
+
+<Accordion title="Rust API Breaking Changes">
+
+**Changed: Method return types**
+
+```rust
+// Before: Returns &Change
+let change = doc.get_change_by_hash(hash);
+
+// After: Returns Change (owned)
+let change = doc.get_change_by_hash(hash);
+```
+
+Changes no longer return references because they're decompressed on demand.
+
+**Changed: Text encoding parameters**
+
+```rust
+// Before
+let text = hydrate::Text::new(TextRepresentation::String);
+
+// After  
+let text = hydrate::Text::new(TextEncoding::Utf8);
+```
+
+**Changed: Range item fields**
+
+```rust
+// Before
+let key: &str = item.key;
+let value: Value = item.value;
+
+// After
+let key: Cow<str> = item.key;
+let value: ValueRef = item.value;
+```
+
+**Removed: TextRepresentation type**
+
+The `TextRepresentation` type has been removed. Methods that accepted it now take `TextEncoding` instead:
+
+```rust
+// Removed methods:
+// - AutoCommit::get_text_rep()
+// - AutoCommit::set_text_rep()
+// - AutoCommit::with_text_rep()
+// - PatchLog::new(text_rep)
+
+// Use TextEncoding instead
+let doc = Automerge::new_with_encoding(TextEncoding::Utf8);
+```
+
+**Removed: visualise_optree()**
+
+The internal storage is no longer a B-tree, so this debug feature was removed:
+
+```rust
+// Before
+doc.visualise_optree(); // Removed
+
+// Use doc.stats() for debugging instead
+let stats = doc.stats();
+```
+
+**Changed: Mark API**
+
+```rust
+// Before
+let mark: Mark<'a> = ...
+let owned = mark.into_owned();
+
+// After  
+let mark: Mark = ... // No lifetime parameter
+let name = mark.name;
+let value = mark.value;
+```
+
+</Accordion>
+
+### Migration Steps
+
+#### Step 1: Update Dependencies
+
+**JavaScript:**
+```json package.json
+{
+  "dependencies": {
+    "@automerge/automerge": "^3.0.0"
+  }
+}
+```
+
+**Rust:**
+```toml Cargo.toml
+[dependencies]
+automerge = "0.7.0"
+```
+
+#### Step 2: Test Your Application
+
+Automerge 3 can read documents created by earlier versions, but you should test thoroughly:
+
+```javascript
+import * as Automerge from "@automerge/automerge"
+
+// Load existing document
+const oldBinary = await loadFromStorage()
+const doc = Automerge.load(oldBinary)
+
+// Verify it works
+console.log("Document loaded successfully:", doc)
+
+// Save in new format
+const newBinary = Automerge.save(doc)
+await saveToStorage(newBinary)
+```
+
+#### Step 3: Update Rust Code (if applicable)
+
+If using the Rust API directly:
+
+**Update method calls:**
+```rust
+// Update return type handling
+let change = doc.get_change_by_hash(hash); // Now owned, not &Change
+
+// Use get_changes_meta if you only need metadata
+let meta = doc.get_change_meta_by_hash(hash); // More efficient
+```
+
+**Update text handling:**
+```rust
+// Replace TextRepresentation with TextEncoding
+let doc = Automerge::new_with_encoding(TextEncoding::Utf8);
+```
+
+**Update mark handling:**
+```rust
+// Marks no longer have lifetime parameters
+let mark: Mark = marks.next().unwrap();
+let name = mark.name;
+let value = mark.value;
+```
+
+#### Step 4: Performance Testing
+
+Measure the memory improvements:
+
+```javascript
+const before = process.memoryUsage().heapUsed
+
+const doc = Automerge.load(largeBinary)
+
+const after = process.memoryUsage().heapUsed
+const used = (after - before) / 1024 / 1024
+
+console.log(`Memory used: ${used.toFixed(2)} MB`)
+console.log(`Binary size: ${(largeBinary.byteLength / 1024 / 1024).toFixed(2)} MB`)
+console.log(`Ratio: ${(used / (largeBinary.byteLength / 1024 / 1024)).toFixed(2)}x`)
+```
+
+Expect memory usage to be approximately 2-3x the binary size.
+
+### Binary Format Compatibility
+
+<Note>
+Automerge 3.x can read documents from 2.x and 1.x, but documents saved with 3.x may not be readable by older clients.
+</Note>
+
+**Forward compatibility strategy:**
+
+```javascript
+// If you need to support older clients
+const doc = Automerge.load(binary)
+
+// Option 1: Keep using old format (not recommended)
+// Don't save, just use in-memory changes
+
+// Option 2: Maintain two versions
+const binary_v3 = Automerge.save(doc) // For new clients
+const binary_v2 = convertToV2(doc)    // For old clients (custom logic)
+
+// Option 3: Upgrade all clients (recommended)
+// Deploy v3 to all clients before saving new format
+```
+
+## Automerge 1.x to 2.x
+
+### Overview
+
+Automerge 2.0 introduced the Rust core and JavaScript wrapper architecture.
+
+### Key Changes
+
+- **Rewritten in Rust** - Core CRDT logic moved to Rust for performance
+- **WASM-based** - JavaScript wrapper uses WebAssembly
+- **Bundler required** - Browser usage requires bundler configuration
+- **Performance improvements** - Significant speed improvements
+
+### Breaking Changes
+
+**Package name change:**
+```javascript
+// Before (1.x)
+import Automerge from "automerge"
+
+// After (2.x+)
+import * as Automerge from "@automerge/automerge"
+```
+
+**Bundler configuration required:**
+
+See [Bundler Configuration](/reference/bundlers) for setup.
+
+**API changes:**
+```javascript
+// Most APIs remain similar
+// Before
+const doc = Automerge.change(doc, d => { d.foo = "bar" })
+
+// After (same)
+const doc = Automerge.change(doc, d => { d.foo = "bar" })
+```
+
+### Migration Steps
+
+1. **Update package:**
+   ```bash
+   npm uninstall automerge
+   npm install @automerge/automerge
+   ```
+
+2. **Update imports:**
+   ```javascript
+   // Find and replace
+   // from: import Automerge from "automerge"
+   // to: import * as Automerge from "@automerge/automerge"
+   ```
+
+3. **Configure bundler:**
+   See [Bundler Configuration](/reference/bundlers)
+
+4. **Test thoroughly:**
+   Binary format compatibility allows reading old documents:
+   ```javascript
+   const doc = Automerge.load(oldFormatBinary) // Works!
+   ```
+
+## Version Compatibility Matrix
+
+| From Version | To Version | Binary Format | API Changes | Notes |
+|--------------|------------|---------------|-------------|-------|
+| 1.x | 2.x | Compatible | Minor | Package rename |
+| 2.x | 3.x | Forward only | Rust only | 10x memory improvement |
+| 1.x | 3.x | Forward only | Minor | Combine migrations |
+
+**Legend:**
+- **Compatible**: Full bidirectional compatibility
+- **Forward only**: Newer versions can read older formats, but not vice versa
+
+## Getting Help
+
+If you encounter issues during migration:
+
+- **Discord**: [Join the Automerge Discord](https://discord.gg/HrpnPAU5zx)
+- **GitHub**: [Report issues](https://github.com/automerge/automerge/issues)
+- **Docs**: [Complete documentation](https://automerge.org/docs/hello/)
+
+## Changelog
+
+For detailed version history, see:
+
+- [Changelog](/reference/changelog) - Complete version history
+- [GitHub Releases](https://github.com/automerge/automerge/releases) - Release notes

@@ -1,0 +1,100 @@
+---
+title: Rust API Overview
+description: Core implementation of Automerge in Rust
+---
+
+The Rust API is the core implementation of Automerge, providing the foundational CRDT data structures and algorithms that power all other language bindings.
+
+## Architecture
+
+The Rust library serves as:
+
+- **Core Implementation**: All the fundamental CRDT logic, merge algorithms, and storage formats are implemented in Rust
+- **Backend for JavaScript**: The JavaScript API is a wrapper around the Rust implementation compiled to WebAssembly
+- **Foundation for Other Bindings**: C FFI bindings and other language wrappers are built on top of this crate
+
+## Design Philosophy
+
+<Note>
+The Rust API is designed primarily as a high-performance backend for the JavaScript wrapper. As such, it provides a lower-level API compared to the JavaScript implementation.
+</Note>
+
+Key characteristics:
+
+- **Low-level API**: Direct manipulation of documents using object IDs and transactions
+- **Performance-focused**: Optimized for speed and memory efficiency
+- **Minimal abstractions**: Provides building blocks rather than high-level conveniences
+
+## When to Use the Rust API
+
+The Rust API is ideal for:
+
+- **Building language bindings**: Creating wrappers for other programming languages
+- **Performance-critical applications**: Where direct access to the core implementation is beneficial
+- **Embedded systems**: Where Rust's safety and performance characteristics are important
+
+<Note>
+If you're building a Rust application and want a more ergonomic API, consider using [autosurgeon](https://github.com/automerge/autosurgeon), which provides higher-level abstractions including serde-based serialization.
+</Note>
+
+## Documentation Resources
+
+<Note>
+The canonical API reference for the Rust implementation is published on [docs.rs](https://docs.rs/automerge/latest/automerge/). This documentation is automatically generated from the source code and includes all public APIs, types, and traits.
+</Note>
+
+### What's Available
+
+- **API Reference**: Complete documentation on [docs.rs](https://docs.rs/automerge/latest/automerge/)
+- **Source Code**: Available in the [Automerge repository](https://github.com/automerge/automerge)
+- **Examples**: See the `rust/automerge/examples/` directory in the repository
+
+## Core Concepts
+
+### Document Types
+
+The Rust API provides two main document types:
+
+- **`Automerge`**: Requires explicit transaction management for all changes
+- **`AutoCommit`**: Manages transactions automatically, providing a simpler API
+
+Both implement the `ReadDoc` trait for reading values and provide access to the sync protocol via `SyncDoc`.
+
+### Data Model
+
+Automerge documents support:
+
+- **Composite types**: Maps, Lists, and Text objects
+- **Primitive types**: Strings, integers, floats, booleans, counters, and timestamps
+- **Conflict resolution**: Deterministic merging with access to conflicting values
+
+### Key Features
+
+- **CRDT Operations**: Conflict-free replicated data types for seamless merging
+- **Sync Protocol**: Efficient synchronization between documents
+- **Binary Format**: Compact storage and network transmission
+- **Patch System**: Incremental updates for materialized views
+- **Cursors**: Position tracking in sequences across merges
+
+## Version Information
+
+- **Current Version**: 0.7.4
+- **Minimum Rust Version**: 1.89.0
+- **License**: MIT
+
+## Related Libraries
+
+- **[autosurgeon](https://github.com/automerge/autosurgeon)**: Higher-level Rust API with serde integration
+- **automerge-wasm**: WebAssembly bindings for JavaScript
+- **automerge-c**: C FFI bindings for other languages
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Getting Started" icon="rocket" href="/api/rust/getting-started">
+    Learn how to add Automerge to your Rust project
+  </Card>
+  <Card title="API Reference" icon="book" href="https://docs.rs/automerge/latest/automerge/" target="_blank">
+    Complete API documentation on docs.rs
+  </Card>
+</CardGroup>

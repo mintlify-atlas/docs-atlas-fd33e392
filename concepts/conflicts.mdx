@@ -1,0 +1,438 @@
+---
+title: 'Conflicts'
+description: 'Understanding and handling conflicts with getConflicts()'
+---
+
+# Conflicts in Automerge
+
+Conflicts occur when multiple actors concurrently assign different values to the same property in an object. Automerge resolves these conflicts automatically and deterministically, but also preserves all conflicting values for inspection.
+
+## When Conflicts Occur
+
+Conflicts **only** happen with concurrent assignments to the same key:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type Profile = {
+  pets: Array<{ name: string; type: string }>
+}
+
+let doc1 = Automerge.init<Profile>("aaaa")
+doc1 = Automerge.change(doc1, d => {
+  d.pets = [{ name: "Lassie", type: "dog" }]
+})
+
+let doc2 = Automerge.init<Profile>("bbbb")
+doc2 = Automerge.merge(doc2, Automerge.clone(doc1))
+
+// Concurrent assignment to the same property
+doc2 = Automerge.change(doc2, d => {
+  d.pets[0].name = "Beethoven"
+})
+
+doc1 = Automerge.change(doc1, d => {
+  d.pets[0].name = "Babe"
+})
+
+const doc3 = Automerge.merge(doc1, doc2)
+
+// Automerge picks one value deterministically
+console.log(doc3.pets[0].name) // Either "Babe" or "Beethoven"
+```
+
+<Note>
+All peers with the same set of changes will deterministically choose the same value. However, which value is chosen is implementation-specific and should be considered arbitrary.
+</Note>
+
+## When Conflicts Don't Occur
+
+### Different Properties
+
+Editing different properties never conflicts:
+
+```typescript
+let doc1 = Automerge.from({ name: "Alice", age: 30 })
+let doc2 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => d.name = "Alice Smith")
+doc2 = Automerge.change(doc2, d => d.age = 31)
+
+const merged = Automerge.merge(doc1, doc2)
+// No conflict: { name: "Alice Smith", age: 31 }
+```
+
+### List Operations
+
+Concurrent insertions and deletions in lists don't create conflicts:
+
+```typescript
+let doc1 = Automerge.from({ items: ["a", "b", "c"] })
+let doc2 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => d.items.push("d"))
+doc2 = Automerge.change(doc2, d => d.items.push("e"))
+
+const merged = Automerge.merge(doc1, doc2)
+// No conflict: items is ["a", "b", "c", "d", "e"]
+```
+
+### Counter Operations
+
+Counter increments/decrements always merge additively:
+
+```typescript
+let doc1 = Automerge.from({ count: new Automerge.Counter(0) })
+let doc2 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => d.count.increment(5))
+doc2 = Automerge.change(doc2, d => d.count.increment(3))
+
+const merged = Automerge.merge(doc1, doc2)
+// No conflict: count.value is 8
+```
+
+## Inspecting Conflicts
+
+Use `getConflicts()` to examine all conflicting values:
+
+```typescript
+type Profile = {
+  pets: Array<{ name: string; type: string }>
+}
+
+let doc1 = Automerge.init<Profile>("aaaa")
+doc1 = Automerge.change(doc1, d => {
+  d.pets = [{ name: "Lassie", type: "dog" }]
+})
+
+let doc2 = Automerge.init<Profile>("bbbb")
+doc2 = Automerge.merge(doc2, Automerge.clone(doc1))
+
+doc2 = Automerge.change(doc2, d => {
+  d.pets[0].name = "Beethoven"
+})
+
+doc1 = Automerge.change(doc1, d => {
+  d.pets[0].name = "Babe"
+})
+
+const doc3 = Automerge.merge(doc1, doc2)
+
+// Get conflicts for the 'name' property
+// Note: Pass doc3.pets[0], not doc3
+const conflicts = Automerge.getConflicts(doc3.pets[0], "name")
+
+console.log(conflicts)
+// {
+//   "2@aaaa": "Babe",
+//   "2@bbbb": "Beethoven"
+// }
+
+// Get all conflicting values
+const values = Object.values(conflicts || {})
+console.log(values) // ["Babe", "Beethoven"]
+```
+
+<Tip>
+**Important**: Pass the object containing the property to `getConflicts()`, not the root document. For nested properties, pass the parent object.
+</Tip>
+
+## Conflict Keys
+
+The keys in the conflicts object are **operation IDs** that uniquely identify each assignment:
+
+```typescript
+const conflicts = Automerge.getConflicts(doc.pets[0], "name")
+// {
+//   "2@aaaa": "Babe",      // Operation 2 by actor "aaaa"
+//   "2@bbbb": "Beethoven"  // Operation 2 by actor "bbbb"
+// }
+```
+
+The format is `<sequence_number>@<actor_id>`:
+- **Sequence number**: The operation number in that actor's history
+- **Actor ID**: The unique identifier of the actor who made the change
+
+## Resolving Conflicts
+
+Automerge automatically resolves conflicts, but you may want to:
+
+### 1. Present All Values to Users
+
+```typescript
+function showConflicts(doc: any, obj: any, prop: string) {
+  const conflicts = Automerge.getConflicts(obj, prop)
+  
+  if (conflicts && Object.keys(conflicts).length > 0) {
+    console.log(`Multiple values for ${prop}:`)
+    Object.entries(conflicts).forEach(([opId, value]) => {
+      console.log(`  - ${value} (from ${opId})`)
+    })
+    
+    // Let user choose which value to keep
+    return Object.values(conflicts)
+  }
+  
+  return [obj[prop]]
+}
+```
+
+### 2. Apply Custom Resolution Logic
+
+```typescript
+function resolveConflict(doc: any, obj: any, prop: string) {
+  const conflicts = Automerge.getConflicts(obj, prop)
+  
+  if (!conflicts) return obj[prop]
+  
+  // Example: Keep the longest string
+  const values = Object.values(conflicts) as string[]
+  const longest = values.reduce((a, b) => 
+    a.length > b.length ? a : b
+  )
+  
+  return longest
+}
+
+// Apply the resolution
+doc = Automerge.change(doc, d => {
+  d.pets[0].name = resolveConflict(doc, doc.pets[0], "name")
+})
+```
+
+### 3. Keep All Versions
+
+```typescript
+function preserveAllVersions(doc: any, obj: any, prop: string) {
+  const conflicts = Automerge.getConflicts(obj, prop)
+  
+  if (conflicts) {
+    // Store all versions in an array
+    return Object.values(conflicts)
+  }
+  
+  return [obj[prop]]
+}
+
+doc = Automerge.change(doc, d => {
+  const allNames = preserveAllVersions(doc, doc.pets[0], "name")
+  d.pets[0].alternateNames = allNames
+  d.pets[0].name = allNames[0] // Keep one as primary
+})
+```
+
+## Conflicts Inside Change Callbacks
+
+You can access and modify conflicts inside `change()` callbacks:
+
+```typescript
+let doc1 = Automerge.from({ user: {} })
+let doc2 = Automerge.clone(doc1)
+let doc3 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => {
+  d.user = { name: "Alice" }
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.user = { name: "Bob" }
+})
+
+doc3 = Automerge.change(doc3, d => {
+  d.user = { name: "Charlie" }
+})
+
+doc1 = Automerge.merge(doc1, doc2)
+doc1 = Automerge.merge(doc1, doc3)
+
+// Modify all conflicted values
+doc1 = Automerge.change(doc1, d => {
+  const conflicts = Automerge.getConflicts(d, "user")
+  
+  if (conflicts) {
+    for (const conflict of Object.values(conflicts)) {
+      if (conflict && typeof conflict === "object") {
+        // Can modify nested properties in conflicted objects
+        conflict["name"] = "Updated"
+      }
+    }
+  }
+})
+
+const afterConflicts = Automerge.getConflicts(doc1, "user")
+console.log(afterConflicts)
+// All conflicted user objects now have name: "Updated"
+```
+
+<Warning>
+**Outside change callbacks**, `getConflicts()` returns frozen objects that cannot be modified. **Inside change callbacks**, it returns proxies that can be modified.
+</Warning>
+
+## Conflicts in Lists
+
+Conflicts can occur in list elements too:
+
+```typescript
+let doc1 = Automerge.from({ 
+  users: [{ name: "initial" }] 
+})
+
+let doc2 = Automerge.clone(doc1)
+let doc3 = Automerge.clone(doc1)
+
+// Three concurrent assignments to the same list element
+doc1 = Automerge.change(doc1, d => {
+  d.users[0] = { name: "Alice" }
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.users[0] = { name: "Bob" }
+})
+
+doc3 = Automerge.change(doc3, d => {
+  d.users[0] = { name: "Charlie" }
+})
+
+doc1 = Automerge.merge(doc1, doc2)
+doc1 = Automerge.merge(doc1, doc3)
+
+// Check for conflicts at index 0
+const conflicts = Automerge.getConflicts(doc1.users, 0)
+
+console.log(conflicts)
+// {
+//   "opId1": { name: "Alice" },
+//   "opId2": { name: "Bob" },
+//   "opId3": { name: "Charlie" }
+// }
+```
+
+<Note>
+For list conflicts, pass the array and the index:
+
+```typescript
+Automerge.getConflicts(doc.users, 0) // Conflicts at index 0
+```
+</Note>
+
+## No Conflicts Returns Undefined
+
+If there are no conflicts, `getConflicts()` returns `undefined`:
+
+```typescript
+let doc = Automerge.from({ name: "Alice" })
+
+const conflicts = Automerge.getConflicts(doc, "name")
+
+console.log(conflicts) // undefined
+
+if (conflicts) {
+  // Handle conflicts
+} else {
+  // No conflicts - single value
+  console.log(doc.name)
+}
+```
+
+## Best Practices
+
+### 1. Check for Conflicts After Merge
+
+```typescript
+const merged = Automerge.merge(doc1, doc2)
+
+const criticalProps = ["title", "owner", "status"]
+
+for (const prop of criticalProps) {
+  const conflicts = Automerge.getConflicts(merged, prop)
+  
+  if (conflicts) {
+    console.warn(`Conflict detected on ${prop}:`, conflicts)
+    // Handle appropriately
+  }
+}
+```
+
+### 2. Present Conflicts to Users
+
+```typescript
+function detectConflicts(doc: any): string[] {
+  const conflictedProps: string[] = []
+  
+  for (const prop in doc) {
+    const conflicts = Automerge.getConflicts(doc, prop)
+    if (conflicts) {
+      conflictedProps.push(prop)
+    }
+  }
+  
+  return conflictedProps
+}
+
+const conflicted = detectConflicts(merged)
+
+if (conflicted.length > 0) {
+  showConflictDialog(conflicted)
+}
+```
+
+### 3. Log Conflicts for Monitoring
+
+```typescript
+function auditConflicts(doc: any, path: string = "") {
+  if (typeof doc !== "object" || doc === null) return
+  
+  for (const prop in doc) {
+    const fullPath = path ? `${path}.${prop}` : prop
+    const conflicts = Automerge.getConflicts(doc, prop)
+    
+    if (conflicts) {
+      console.log(`Conflict at ${fullPath}:`, conflicts)
+      // Send to monitoring service
+    }
+    
+    // Recurse into nested objects
+    if (typeof doc[prop] === "object") {
+      auditConflicts(doc[prop], fullPath)
+    }
+  }
+}
+```
+
+### 4. Design to Minimize Conflicts
+
+```typescript
+// Instead of concurrent assignment:
+// ❌ Both users set doc.owner = "different values"
+
+// Use append-only structures:
+// ✅ Both users add to doc.collaborators array
+
+let doc = Automerge.from({
+  collaborators: ["Alice"]
+})
+
+doc = Automerge.change(doc, d => {
+  d.collaborators.push("Bob")   // No conflict
+})
+```
+
+## Semantic vs. Structural Conflicts
+
+<Warning>
+Automerge resolves **structural** conflicts (concurrent assignments to the same key), but cannot resolve **semantic** conflicts (changes that don't make sense together).
+
+For example:
+- User A sets price to $10
+- User B sets price to $20
+- Both are valid assignments, but the business logic might require review
+
+Design your application to handle semantic conflicts at the application layer.
+</Warning>
+
+## Next Steps
+
+- Learn about [Sync](/concepts/sync) to efficiently transmit changes
+- Understand [Merging](/concepts/merging) to see how conflicts arise
+- Review [Changes](/concepts/changes) to see what creates conflicts

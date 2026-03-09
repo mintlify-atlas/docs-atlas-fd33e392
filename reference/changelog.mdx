@@ -1,0 +1,259 @@
+---
+title: Changelog
+description: Version history and release notes for Automerge
+---
+
+Complete changelog for Automerge. For more details, see [GitHub Releases](https://github.com/automerge/automerge/releases).
+
+## Latest Releases
+
+### Version 0.7.4
+
+**Bug Fixes:**
+- Fix a bug which caused patches in documents containing rich text to be malformed
+
+### Version 0.7.3
+
+**Bug Fixes:**
+- Fix a bug in sync where peers which have lost their sync state would revert to v1 sync which would result in very slow sync for large document histories
+
+**New Features:**
+- Add `{Automerge, AutoCommit}::diff_obj` to get the patches for a specific object rather than the entire document state
+
+### Version 0.7.2
+
+**Performance:**
+- Fix a bug which could cause sync messages to take a long time to process ([#1218](https://github.com/automerge/automerge/issues/1218))
+- Reduce peak memory usage when loading ([#1184](https://github.com/automerge/automerge/issues/1184))
+
+### Version 0.7.1
+
+**Bug Fixes:**
+- Fix a bug which could cause sync loops (and other misbehaviors)
+
+**Requirements:**
+- Update minimum supported Rust version to 1.89
+
+## Major Releases
+
+<Accordion title="Version 0.7.0 - Columnar Compression (Major Release)">
+
+This is a major release introducing columnar compression at runtime, achieving approximately **100x lower steady-state memory usage**.
+
+**Added:**
+
+- `ReadDoc::iter` and `ReadDoc::iter_at` for iterating over the whole document
+- `{AutoCommit, Automerge}::apply_changes_batch` which efficiently applies a batch of changes at once
+- `{AutoCommit, Automerge}::bundle` which compacts a set of changes in a similar manner to `Automerge::save` but without needing to include every change (experimental API)
+- `{AutoCommit}::is_empty()` to determine if there are any commits at all in a document
+- `{Automerge, AutoCommit}::{get_changes_meta, get_change_meta_by_hash}` to return just the metadata for a change by hash
+- `Transactable::update_spans` now takes an `UpdateSpansConfig` parameter
+- `Change::actors` which returns the actor IDs in a change
+- `MarkSet::non_deleted_marks` returns a wrapper type for comparing MarkSets without deleted marks
+- `Stats::{num_actors, cargo_package_name, cargo_package_version, rustc_version}`
+
+**Changed:**
+
+<Warning>
+These are breaking changes. See the [Migration Guide](/reference/migration-guide) for details.
+</Warning>
+
+- `Automerge::{get_last_local_change, get_change, get_change_by_hash}` returns a `Change` not an `&Change` (changes are decompressed on demand)
+- `hydrate::Text::new` and `hydrate::Value::text` now take a `TextEncoding` argument rather than a `TextRepresentation` argument
+- `hydrate::Value::{apply_patches, apply}` now takes a `TextEncoding` argument
+- The `MapRangeItem::key` field is now a `Cow<'a, str>` not a `&'a str`
+- `ListRangeItem` and `MapRangeItem` no longer have a `R: RangeBound` parameter
+- The `{ListRangeItem, MapRangeItem}::value` field is now a `ValueRef` not a `Value`
+- `Span::Text` now has named fields rather than being a tuple variant
+- `Mark` no longer has a lifetime type parameter and there is no longer a `Mark::into_owned` method
+- `Mark::data` has become `Mark::{name, value}`
+- `MarkData` has been renamed to `OldMarkData` and should generally not be used
+
+**Removed:**
+
+- `{AutoCommit, Automerge}::visualise_optree` - the internal storage is no longer a b-tree
+- The `{ListRangeItem, MapRangeItem}::id` field is gone
+- The `TextRepresentation` type no longer exists
+  - `AutoCommit::{get_text_rep, set_text_rep, with_text_rep}` have been removed
+  - `Automerge::{transact_and_log_patches, transact_and_log_patches_with, current_state, diff}` no longer take a `TextRepresentation` argument
+  - `PatchLog::new` no longer takes a `TextRepresentation` argument
+
+**Fixed:**
+
+- Many small bugs with the spans and updateSpans methods and patch generation
+
+</Accordion>
+
+<Accordion title="Version 0.6.x - Text Encoding and Cursors">
+
+### Version 0.6.1
+
+**Bug Fixes:**
+- Fix a bug where `{Automerge, AutoCommit}::get_marks` would return removed marks as mark with value `ScalarValue::Null` rather than not returning them at all
+
+### Version 0.6.0
+
+**New Features:**
+- Add the ability to set the text encoding used when calculating indices into text objects via the `Automerge::new_with_encoding` constructor
+- Update the cursor API to allow creating cursors which point at the beginning or end of the text
+- Allow configuring how the cursor position is resolved when the original character which the cursor referenced has been deleted
+
+</Accordion>
+
+<Accordion title="Version 0.5.x - Marks, Spans, and Rich Text">
+
+### Version 0.5.12
+
+**New Features:**
+- Allow empty keys in maps
+- Add `SyncState::has_our_changes` to indicate whether we think the other end has everything we have
+- Add `ReadDoc::stats` to obtain basic statistics about a document
+- Allow configuring character widths for wasm32 target via utf-16 indexing feature flag
+
+### Version 0.5.11
+
+**Bug Fixes:**
+- Fixed a bug where actor IDs were written incorrectly to the save document format, making it impossible to load the document
+
+### Version 0.5.10
+
+**Rich Text Features:**
+
+Primary feature: block markers in rich text
+
+- `ReadDoc::{spans, spans_at}` which return spans of text grouped by marks and separated by block markers
+- `Transactable::{split_block, join_block, update_block}` for creating, removing, and updating block markers
+- `Transactable::update_spans` for updating all block markers and text in a text sequence at once
+
+**Bug Fixes:**
+- Fix a bug where marks set to not expand at the end still produced splice patches containing the mark
+- Fix a bug where splicing into the end of an expanding mark didn't produce patches with marks when receiving changes remotely
+- Fix a bug where "undeleted" objects were not emitted in patches when patching in reverse
+
+### Version 0.5.9
+
+**Bug Fixes:**
+- Fix a bug introduced in 0.5.8 which caused an error when loading a saved document with empty commits
+
+**Performance:**
+- Improve performance when diffing documents which contain a large number of objects
+
+### Version 0.5.8
+
+**Bug Fixes:**
+- Fix a bug where the logic to rollback a transaction on error could panic
+- Fix a bug where marks were calculated incorrectly when viewing a document at particular heads
+- Update the `LoadOptions::migrate_strings` logic to no-op if there are no strings to convert
+
+### Version 0.5.7
+
+**Dependencies:**
+- Update itertools dependency to 0.12.0
+
+**Bug Fixes:**
+- Fix a bug in `Read::get_marks` which caused it to ignore any heads passed to it
+
+### Version 0.5.6
+
+**New Features:**
+- Add `Transactable::update_text`, which calculates a diff between the current value of a text field and a new value and converts that diff into splice operations
+
+### Version 0.5.5
+
+**Bug Fixes:**
+- Fix a sync protocol backwards compatibility issue which caused 0.5.4 peers to emit messages that older peers couldn't understand in some circumstances
+
+### Version 0.5.4
+
+**Performance:**
+- Performance improvements when loading documents with large numbers of objects
+- Modify the sync protocol to send the entire document in the first message if the other end has nothing (dramatically improves initial sync speed)
+- This is a backwards compatible change
+
+### Version 0.5.3
+
+**Performance:**
+- Numerous performance improvements
+
+**New Features:**
+- Add `ReadDoc::get_marks` to get the marks active at a particular index in a sequence
+- Make `generate_sync_message` always return at least one sync message for completion notification
+
+### Version 0.5.2
+
+**Bug Fixes:**
+- Fix a bug where sync messages were not generated even though sync was not complete
+- Fix a bug where adding a mark to the last character in a text string failed to produce a patch
+
+**New Features:**
+- Add `Automerge::load_with_options` and `AutoCommit::load_with_options`
+- Deprecate `Automerge::load_with` and `AutoCommit::load_with`
+- Add option to convert `ScalarValue::Str` values to `ObjType::Text` on load
+- Expose `VerificationMode`
+
+### Version 0.5.1
+
+**Improvements:**
+- Make `AutoCommit` and `PatchLog` `Send`
+- Make `Automerge::load_incremental_log_patches` `pub`
+
+### Version 0.5.0
+
+**New Features:**
+- Added `Cursor` for managing references to positions in sequences and text
+- Remove `OpObserver` and instead expose a patch-based API
+- Methods now use `<method>_log_patches` pattern that accepts a `PatchLog`
+- Add `AutoCommit::{diff, diff_incremental}` for managing incrementally updated materialized views
+- Add `Transactable::change_at` for creating a transaction which operates on the document as at some heads
+- Add `Autocommit::{isolate, integrate}` using this functionality
+
+</Accordion>
+
+## JavaScript Package Releases
+
+For JavaScript-specific releases (`@automerge/automerge` and `@automerge/automerge-wasm`), see:
+
+<Card title="NPM - @automerge/automerge" icon="npm" href="https://www.npmjs.com/package/@automerge/automerge">
+  JavaScript package release history on NPM
+</Card>
+
+## Release Process
+
+Automerge uses separate release processes for different packages:
+
+### Rust Package (`automerge`)
+
+1. Version bump in `automerge/Cargo.toml`
+2. Create PR and merge to main
+3. Tag as `rust/automerge@<version>`
+4. Publish with `cargo publish`
+
+### JavaScript Packages
+
+1. Version bump in `javascript/package.json`
+2. Create PR and merge to main
+3. Tag as `js/automerge-<version>`
+4. CI automatically publishes to NPM
+
+<Note>
+The NPM publish token has a 30-day expiry and needs periodic manual refresh.
+</Note>
+
+## Deprecation Policy
+
+Automerge follows semantic versioning:
+
+- **Major versions** (X.0.0) - Breaking changes allowed
+- **Minor versions** (0.X.0) - New features, backwards compatible
+- **Patch versions** (0.0.X) - Bug fixes only
+
+<Warning>
+APIs marked as "experimental" may change in minor versions. Check release notes carefully.
+</Warning>
+
+## Resources
+
+- [GitHub Releases](https://github.com/automerge/automerge/releases) - Detailed release notes
+- [Migration Guide](/reference/migration-guide) - Version upgrade guidance
+- [Automerge Blog](https://automerge.org/blog/) - Major release announcements
+- [Discord Community](https://discord.gg/HrpnPAU5zx) - Release discussions

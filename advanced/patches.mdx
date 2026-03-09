@@ -1,0 +1,559 @@
+---
+title: Patches and Change Notifications
+description: Listen to document changes with PatchCallback and understand the patch format
+---
+
+## What Are Patches?
+
+Patches are notifications that describe granular changes made to an Automerge document. They allow you to:
+- Update UI efficiently in response to changes
+- Sync external state (like text editors) with Automerge
+- Implement custom change handlers
+- Debug and observe document modifications
+
+<Note>
+Patches provide a **delta** between two document states, not the full state. This makes them efficient for incremental updates.
+</Note>
+
+## The PatchCallback Type
+
+A `PatchCallback` is a function that receives patches whenever a document changes:
+
+```typescript
+type PatchCallback<T> = (
+  patches: Array<Patch>,
+  info: PatchInfo<T>
+) => void
+
+type PatchInfo<T> = {
+  before: Doc<T>    // Document state before changes
+  after: Doc<T>     // Document state after changes
+  source: PatchSource // What caused the change
+}
+
+type PatchSource =
+  | "from"
+  | "emptyChange"
+  | "change"
+  | "changeAt"
+  | "merge"
+  | "loadIncremental"
+  | "applyChanges"
+  | "receiveSyncMessage"
+```
+
+## Setting Up Patch Callbacks
+
+### During Document Initialization
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+const patchCallback = (patches, info) => {
+  console.log("Changes from:", info.source)
+  console.log("Patches:", patches)
+  console.log("Before:", info.before)
+  console.log("After:", info.after)
+}
+
+const doc = Automerge.init({
+  actor: "user-123",
+  patchCallback
+})
+```
+
+### Per-Operation Callbacks
+
+You can override or provide callbacks for individual operations:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.init<{ count: number }>()
+
+const doc2 = Automerge.change(
+  doc,
+  {
+    message: "Increment counter",
+    patchCallback: (patches, info) => {
+      console.log(`Applied ${patches.length} patches`)
+    }
+  },
+  d => {
+    d.count = 1
+  }
+)
+```
+
+### Multiple Operations
+
+The callback set during initialization persists across operations:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+const patches: any[] = []
+
+let doc = Automerge.init({
+  patchCallback: (p) => patches.push(...p)
+})
+
+doc = Automerge.change(doc, d => { d.value = 1 })
+doc = Automerge.change(doc, d => { d.value = 2 })
+
+console.log(patches.length) // All patches from both changes
+```
+
+## Patch Types and Format
+
+Automerge generates several types of patches:
+
+### 1. Put Patch (Property Assignment)
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.init<{ name?: string }>()
+
+const patches: any[] = []
+doc = Automerge.change(
+  doc,
+  { patchCallback: (p) => patches.push(...p) },
+  d => {
+    d.name = "Alice"
+  }
+)
+
+console.log(patches)
+// [{ action: "put", path: ["name"], value: "Alice" }]
+```
+
+### 2. Insert Patch (Array Insertion)
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ items: ["a"] })
+
+const patches: any[] = []
+doc = Automerge.change(
+  doc,
+  { patchCallback: (p) => patches.push(...p) },
+  d => {
+    d.items.push("b")
+    d.items.push("c")
+  }
+)
+
+console.log(patches)
+// [
+//   { action: "insert", path: ["items", 1], values: [""] },
+//   { action: "splice", path: ["items", 1, 0], value: "b" },
+//   { action: "insert", path: ["items", 2], values: [""] },
+//   { action: "splice", path: ["items", 2, 0], value: "c" }
+// ]
+```
+
+### 3. Delete Patch (Property/Element Deletion)
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ items: ["a", "b", "c"] })
+
+const patches: any[] = []
+doc = Automerge.change(
+  doc,
+  { patchCallback: (p) => patches.push(...p) },
+  d => {
+    Automerge.deleteAt(d.items, 1)
+  }
+)
+
+console.log(patches)
+// [{ action: "del", path: ["items", 1], length: 1 }]
+```
+
+### 4. Splice Patch (Text Modification)
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ text: "hello" })
+
+const patches: any[] = []
+doc = Automerge.change(
+  doc,
+  { patchCallback: (p) => patches.push(...p) },
+  d => {
+    Automerge.splice(d, ["text"], 5, 0, " world")
+  }
+)
+
+console.log(patches)
+// [{ action: "splice", path: ["text", 5], value: " world" }]
+```
+
+### 5. Increment Patch (Counter Updates)
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({
+  counter: new Automerge.Counter(0)
+})
+
+const patches: any[] = []
+doc = Automerge.change(
+  doc,
+  { patchCallback: (p) => patches.push(...p) },
+  d => {
+    d.counter.increment(5)
+  }
+)
+
+console.log(patches)
+// [{ action: "inc", path: ["counter"], value: 5 }]
+```
+
+### 6. Mark/Unmark Patches (Text Formatting)
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ text: "hello" })
+
+const patches: any[] = []
+doc = Automerge.change(
+  doc,
+  { patchCallback: (p) => patches.push(...p) },
+  d => {
+    Automerge.mark(
+      d,
+      ["text"],
+      { start: 0, end: 5, expand: "none" },
+      "bold",
+      true
+    )
+  }
+)
+
+console.log(patches)
+// [{
+//   action: "mark",
+//   path: ["text"],
+//   marks: [{ name: "bold", value: true, start: 0, end: 5 }]
+// }]
+```
+
+## Accessing Before and After States
+
+The `PatchInfo` provides access to both document states:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from<{ list: string[] }>({
+  list: ["a", "b", "c"]
+})
+
+const newDoc = Automerge.change(
+  doc,
+  {
+    patchCallback: (patches, info) => {
+      console.log("Before:", info.before.list) // ["a", "b", "c"]
+      console.log("After:", info.after.list)   // ["a", "c"]
+      console.log("Source:", info.source)      // "change"
+      
+      // You can also get heads
+      const headsBefore = Automerge.getHeads(info.before)
+      const headsAfter = Automerge.getHeads(info.after)
+      console.log("Changed:", headsBefore !== headsAfter)
+    }
+  },
+  d => {
+    Automerge.deleteAt(d.list, 1)
+  }
+)
+```
+
+## Practical Use Cases
+
+### Syncing with a Text Editor
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+class TextEditorSync {
+  private doc: Automerge.Doc<{ content: string }>
+  private editor: any // Your editor instance
+
+  constructor(editor: any) {
+    this.editor = editor
+    this.doc = Automerge.init({
+      patchCallback: (patches) => this.applyPatchesToEditor(patches)
+    })
+  }
+
+  private applyPatchesToEditor(patches: any[]) {
+    patches.forEach(patch => {
+      if (patch.path[0] !== "content") return
+
+      if (patch.action === "splice") {
+        const [_, index] = patch.path
+        this.editor.insert(index, patch.value)
+      } else if (patch.action === "del") {
+        const [_, index] = patch.path
+        const length = patch.length || 1
+        this.editor.delete(index, length)
+      }
+    })
+  }
+
+  onEditorChange(index: number, deleted: string, inserted: string) {
+    this.doc = Automerge.change(this.doc, d => {
+      if (deleted.length > 0) {
+        Automerge.splice(d, ["content"], index, deleted.length)
+      }
+      if (inserted.length > 0) {
+        Automerge.splice(d, ["content"], index, 0, inserted)
+      }
+    })
+  }
+}
+```
+
+### React Integration
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+import { useState, useCallback } from "react"
+
+function useAutomergeDoc<T>(initialState: T) {
+  const [doc, setDoc] = useState(() =>
+    Automerge.from(initialState, {
+      patchCallback: (patches, info) => {
+        // Trigger re-render with the new document state
+        setDoc(info.after)
+      }
+    })
+  )
+
+  const changeDoc = useCallback((fn: (draft: T) => void) => {
+    setDoc(currentDoc => Automerge.change(currentDoc, fn))
+  }, [])
+
+  return [doc, changeDoc] as const
+}
+
+// Usage
+function TodoApp() {
+  const [doc, changeDoc] = useAutomergeDoc({ todos: [] })
+
+  const addTodo = (text: string) => {
+    changeDoc(d => {
+      d.todos.push({ text, done: false })
+    })
+  }
+
+  return (
+    <div>
+      {doc.todos.map((todo, i) => (
+        <div key={i}>{todo.text}</div>
+      ))}
+    </div>
+  )
+}
+```
+
+### Change Auditing
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+class ChangeAuditor {
+  private changes: any[] = []
+
+  createAuditedDoc<T>(initialState: T) {
+    return Automerge.from(initialState, {
+      patchCallback: (patches, info) => {
+        this.changes.push({
+          timestamp: Date.now(),
+          source: info.source,
+          patches: patches,
+          actor: Automerge.getActorId(info.after)
+        })
+      }
+    })
+  }
+
+  getAuditLog() {
+    return this.changes
+  }
+
+  exportAuditLog() {
+    return JSON.stringify(this.changes, null, 2)
+  }
+}
+
+// Usage
+const auditor = new ChangeAuditor()
+let doc = auditor.createAuditedDoc({ balance: 100 })
+
+doc = Automerge.change(doc, d => { d.balance = 150 })
+doc = Automerge.change(doc, d => { d.balance = 200 })
+
+console.log(auditor.getAuditLog())
+// Full log of all changes with timestamps
+```
+
+## Applying Patches Manually
+
+You can apply patches to both Automerge documents and plain JavaScript objects:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// Apply to Automerge document
+let doc = Automerge.from({ foo: { bar: "baz" } })
+const patch = {
+  action: "put" as const,
+  path: ["foo", "bar"],
+  value: "qux"
+}
+
+doc = Automerge.change(doc, d => {
+  Automerge.applyPatches(d, [patch])
+})
+console.log(doc.foo.bar) // "qux"
+
+// Apply to plain object
+let obj = { foo: { bar: "baz" } }
+Automerge.applyPatches(obj, [patch])
+console.log(obj.foo.bar) // "qux"
+```
+
+## Using diff() for Patch Generation
+
+Generate patches between any two document states:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ birds: ["goldfinch"] })
+const before = Automerge.getHeads(doc)
+
+doc = Automerge.change(doc, d => {
+  d.birds.push("greenfinch")
+  d.fish = ["cod"]
+})
+const after = Automerge.getHeads(doc)
+
+const patches = Automerge.diff(doc, before, after)
+console.log(patches)
+// [
+//   { action: "put", path: ["fish"], value: [] },
+//   { action: "insert", path: ["birds", 1], values: [""] },
+//   { action: "splice", path: ["birds", 1, 0], value: "greenfinch" },
+//   { action: "insert", path: ["fish", 0], values: [""] },
+//   { action: "splice", path: ["fish", 0, 0], value: "cod" }
+// ]
+```
+
+## Best Practices
+
+<Tip>
+1. **Use callbacks for UI updates** - More efficient than polling or comparing full states
+2. **Filter patches by path** - Only process patches relevant to your component
+3. **Batch UI updates** - Collect patches and apply them in a single render
+4. **Handle all patch types** - Ensure your handlers support all patch actions
+5. **Test with concurrent changes** - Patches from merges can be complex
+</Tip>
+
+### Filtering Patches
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+function createFilteredCallback(pathPrefix: string[], handler: Function) {
+  return (patches: any[], info: any) => {
+    const relevant = patches.filter(patch => {
+      return pathPrefix.every((segment, i) => patch.path[i] === segment)
+    })
+    if (relevant.length > 0) {
+      handler(relevant, info)
+    }
+  }
+}
+
+// Only listen to changes in "users" array
+const doc = Automerge.init({
+  patchCallback: createFilteredCallback(["users"], (patches) => {
+    console.log("Users changed:", patches)
+  })
+})
+```
+
+## Performance Considerations
+
+<Warning>
+- Patch callbacks are synchronous and block the change operation
+- Keep callback logic lightweight
+- Avoid making new Automerge changes inside callbacks
+- For expensive operations, queue work for later processing
+</Warning>
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// ❌ Bad: Heavy processing in callback
+const doc1 = Automerge.init({
+  patchCallback: (patches) => {
+    patches.forEach(patch => {
+      // Expensive operation blocks the change
+      heavyProcessing(patch)
+    })
+  }
+})
+
+// ✅ Good: Queue work for async processing
+const workQueue: any[] = []
+const doc2 = Automerge.init({
+  patchCallback: (patches) => {
+    workQueue.push(...patches)
+  }
+})
+
+// Process queue asynchronously
+setInterval(() => {
+  const batch = workQueue.splice(0, 10)
+  batch.forEach(heavyProcessing)
+}, 100)
+```
+
+## Debugging with Patches
+
+Patches are excellent for debugging:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+const logger = (patches: any[], info: any) => {
+  console.group(`Changes from ${info.source}`)
+  patches.forEach((patch, i) => {
+    console.log(`Patch ${i}:`, {
+      action: patch.action,
+      path: patch.path.join('.'),
+      ...patch
+    })
+  })
+  console.groupEnd()
+}
+
+let doc = Automerge.init({ patchCallback: logger })
+
+doc = Automerge.change(doc, d => {
+  d.nested = { deep: { value: 42 } }
+})
+// Logs all patches with full details
+```

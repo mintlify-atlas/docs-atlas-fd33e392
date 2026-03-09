@@ -1,0 +1,249 @@
+---
+title: Making Changes
+description: Learn how to modify Automerge documents using the change function
+---
+
+Automerge documents are immutable. To modify a document, you use the `change()` function, which returns a new version of the document with your changes applied.
+
+## Basic usage
+
+The `change()` function takes a document and a callback function that modifies it:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.init<{ count: number }>()
+
+// Make a change
+doc = Automerge.change(doc, d => {
+  d.count = 1
+})
+
+console.log(doc.count) // 1
+```
+
+<Note>
+Inside the change callback, you can mutate the proxy object `d` directly. Automerge captures these mutations and converts them into CRDT operations.
+</Note>
+
+## Adding a commit message
+
+You can add descriptive messages to changes for debugging and history tracking:
+
+```typescript
+doc = Automerge.change(doc, "increment counter", d => {
+  d.count += 1
+})
+```
+
+Or use the options object for more control:
+
+```typescript
+doc = Automerge.change(doc, 
+  { 
+    message: "increment counter",
+    time: Math.floor(Date.now() / 1000)
+  }, 
+  d => {
+    d.count += 1
+  }
+)
+```
+
+## Working with objects
+
+You can set, update, and delete properties:
+
+```typescript
+type Profile = {
+  name: string
+  age?: number
+  location?: string
+}
+
+let doc = Automerge.init<Profile>()
+
+doc = Automerge.change(doc, d => {
+  // Set properties
+  d.name = "Alice"
+  d.age = 30
+  d.location = "NYC"
+})
+
+doc = Automerge.change(doc, d => {
+  // Update properties
+  d.age = 31
+  
+  // Delete properties
+  delete d.location
+})
+```
+
+## Working with arrays
+
+Automerge supports standard array operations:
+
+```typescript
+type TodoDoc = {
+  todos: Array<{ text: string, done: boolean }>
+}
+
+let doc = Automerge.from<TodoDoc>({ todos: [] })
+
+doc = Automerge.change(doc, d => {
+  // Add items
+  d.todos.push({ text: "Buy milk", done: false })
+  d.todos.push({ text: "Walk dog", done: false })
+  
+  // Update items
+  d.todos[0].done = true
+  
+  // Remove items
+  d.todos.splice(1, 1)
+})
+```
+
+### Array helper methods
+
+For more control, use `insertAt()` and `deleteAt()`:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type ListDoc = { items: string[] }
+let doc = Automerge.from<ListDoc>({ items: ["a", "b", "c"] })
+
+doc = Automerge.change(doc, d => {
+  // Insert at specific position
+  Automerge.insertAt(d.items, 1, "x", "y")
+  // items is now ["a", "x", "y", "b", "c"]
+  
+  // Delete multiple items
+  Automerge.deleteAt(d.items, 0, 2)
+  // items is now ["y", "b", "c"]
+})
+```
+
+## Nested changes
+
+You can make changes to deeply nested structures:
+
+```typescript
+type AppDoc = {
+  users: {
+    [id: string]: {
+      name: string
+      settings: {
+        theme: string
+        notifications: boolean
+      }
+    }
+  }
+}
+
+let doc = Automerge.init<AppDoc>()
+
+doc = Automerge.change(doc, d => {
+  d.users = {}
+  d.users["user1"] = {
+    name: "Alice",
+    settings: {
+      theme: "dark",
+      notifications: true
+    }
+  }
+})
+
+doc = Automerge.change(doc, d => {
+  // Update nested property
+  d.users["user1"].settings.theme = "light"
+})
+```
+
+## Patch callbacks
+
+Receive notifications when changes are made:
+
+```typescript
+type CounterDoc = { count: number }
+
+const patchCallback = (patches, info) => {
+  console.log("Patches:", patches)
+  console.log("Source:", info.source)
+  console.log("Before:", info.before)
+  console.log("After:", info.after)
+}
+
+let doc = Automerge.init<CounterDoc>({ patchCallback })
+
+doc = Automerge.change(doc, 
+  { 
+    patchCallback  // Override or add callback for this change
+  },
+  d => {
+    d.count = 1
+  }
+)
+```
+
+<Tip>
+Patch callbacks are useful for synchronizing Automerge state with UI frameworks like React, Vue, or Svelte.
+</Tip>
+
+## Empty changes
+
+Sometimes you need to create a change without modifying the document (e.g., to sign off on merged changes):
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.init<{ x: number }>()
+
+// Create an empty change with a message
+doc = Automerge.emptyChange(doc, "checkpoint after merge")
+```
+
+## Common patterns
+
+### Multiple related changes
+
+```typescript
+doc = Automerge.change(doc, "add task and update counter", d => {
+  d.tasks.push({ id: "1", text: "New task" })
+  d.taskCount = d.tasks.length
+  d.lastModified = new Date()
+})
+```
+
+### Conditional updates
+
+```typescript
+doc = Automerge.change(doc, d => {
+  if (d.count > 10) {
+    d.status = "high"
+  } else {
+    d.status = "normal"
+  }
+})
+```
+
+## Important notes
+
+<Warning>
+**Cannot nest change() calls**: You cannot call `Automerge.change()` while already inside a change callback. This will throw an error.
+</Warning>
+
+<Warning>
+**Out of date documents**: After calling `change()`, the previous version of the document becomes read-only. Attempting to modify it will throw "Attempting to change an out of date document". Use `clone()` if you need multiple writable copies.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Working with Text" icon="text" href="/guides/working-with-text">
+    Learn about collaborative text editing
+  </Card>
+  <Card title="Conflict Resolution" icon="code-merge" href="/guides/conflict-resolution">
+    Understand how Automerge handles conflicts
+  </Card>
+</CardGroup>

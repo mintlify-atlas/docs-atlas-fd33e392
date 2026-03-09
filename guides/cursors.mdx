@@ -1,0 +1,338 @@
+---
+title: Cursors
+description: Learn how to track cursor positions across concurrent edits
+---
+
+When building collaborative text editors, you need to track cursor positions that remain stable even as the document changes. Automerge provides cursor functions that solve this problem.
+
+## The cursor problem
+
+Consider this scenario:
+
+```typescript
+const text = "The fox jumped"
+let cursorPosition = 4  // After "The "
+
+// User inserts "quick " at position 4
+text = "The quick fox jumped"
+
+// Where should the cursor be now?
+// At 4 (before "quick")?
+// At 10 (after "quick")?
+```
+
+Automerge cursors solve this by creating stable position references.
+
+## Creating cursors
+
+Use `getCursor()` to create a cursor at a position:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ text: "The sly fox jumped over the lazy dog" })
+
+// Create a cursor at position 19
+const cursor = Automerge.getCursor(doc, ["text"], 19)
+
+console.log(cursor) // String like "3@actorId" or "s" or "e"
+```
+
+The cursor is a string that uniquely identifies a position in the text. You can share this cursor with other peers or store it.
+
+## Using cursors with splice
+
+Use cursors as the index parameter in `splice()`:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ 
+  text: "The sly fox jumped over the lazy dog" 
+})
+
+// Get a cursor at position 19 (before "over")
+const cursor = Automerge.getCursor(doc, ["text"], 19)
+
+doc = Automerge.change(doc, d => {
+  // Edit at the beginning
+  Automerge.splice(d, ["text"], 0, 3, "Has the")
+})
+
+// The cursor still points to the same logical position
+doc = Automerge.change(doc, d => {
+  // Insert at the cursor position
+  Automerge.splice(d, ["text"], cursor, 0, "right ")
+})
+
+console.log(doc.text)
+// "Has the sly fox jumped right over the lazy dog"
+```
+
+<Note>
+Cursors automatically adjust as text is inserted or deleted before them, maintaining their logical position in the document.
+</Note>
+
+## Getting cursor positions
+
+Convert a cursor back to a numeric index:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ text: "abc" })
+const cursor = Automerge.getCursor(doc, ["text"], 1)
+
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["text"], 0, 0, "x")
+})
+
+// Get the current position of the cursor
+const position = Automerge.getCursorPosition(doc, ["text"], cursor)
+
+console.log(position) // 2 (was 1, now adjusted for the insert)
+```
+
+## Special cursor positions
+
+You can create cursors for the start and end of text:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ text: "abc" })
+
+// Start cursor - always resolves to 0
+const start = Automerge.getCursor(doc, ["text"], "start")
+// Or use any negative number
+const start2 = Automerge.getCursor(doc, ["text"], -1)
+
+// End cursor - always resolves to text.length
+const end = Automerge.getCursor(doc, ["text"], "end")
+// Or use any number >= text.length
+const end2 = Automerge.getCursor(doc, ["text"], 999)
+
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["text"], start, 0, "START: ")
+  Automerge.splice(d, ["text"], end, 0, " :END")
+})
+
+console.log(doc.text) // "START: abc :END"
+```
+
+## Cursor movement on deletion
+
+When creating a cursor, you can specify how it should behave when the character at that position is deleted:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ text: "aaa@bbb" })
+
+// Create cursors with different move behavior
+const before = Automerge.getCursor(doc, ["text"], 3, "before")
+const after = Automerge.getCursor(doc, ["text"], 3, "after")
+
+doc = Automerge.change(doc, d => {
+  // Delete the @ character at position 3
+  Automerge.splice(d, ["text"], 3, 1, "~~~")
+})
+
+// Check where the cursors ended up
+const beforePos = Automerge.getCursorPosition(doc, ["text"], before)
+const afterPos = Automerge.getCursorPosition(doc, ["text"], after)
+
+console.log(beforePos) // 2 (moved before the deletion)
+console.log(afterPos)  // 6 (moved after the insertion)
+console.log(doc.text)  // "aaa~~~bbb"
+```
+
+### Move behavior
+
+- **`"before"`**: Cursor moves toward position 0 when deleted
+- **`"after"`** (default): Cursor moves toward end when deleted
+
+## Practical example: Collaborative editor
+
+Here's how to maintain cursor positions in a collaborative editor:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+class CollaborativeTextEditor {
+  private doc: Automerge.Doc<{ content: string }>
+  private cursorPosition: number = 0
+  private cursor: string | null = null
+  
+  constructor() {
+    this.doc = Automerge.from({ content: "" })
+  }
+  
+  // Called when user types
+  insert(text: string) {
+    // Save cursor position as Automerge cursor
+    if (this.cursor === null) {
+      this.cursor = Automerge.getCursor(
+        this.doc,
+        ["content"],
+        this.cursorPosition
+      )
+    }
+    
+    this.doc = Automerge.change(this.doc, d => {
+      Automerge.splice(d, ["content"], this.cursor!, 0, text)
+    })
+    
+    // Update cursor position after insert
+    this.cursorPosition = Automerge.getCursorPosition(
+      this.doc,
+      ["content"],
+      this.cursor
+    )
+  }
+  
+  // Called when remote changes arrive
+  applyRemoteChanges(changes: Uint8Array) {
+    // Save current cursor
+    if (this.cursor === null && this.cursorPosition > 0) {
+      this.cursor = Automerge.getCursor(
+        this.doc,
+        ["content"],
+        this.cursorPosition
+      )
+    }
+    
+    // Apply changes
+    this.doc = Automerge.loadIncremental(this.doc, changes)
+    
+    // Restore cursor position (adjusted for remote edits)
+    if (this.cursor) {
+      this.cursorPosition = Automerge.getCursorPosition(
+        this.doc,
+        ["content"],
+        this.cursor
+      )
+    }
+  }
+  
+  setCursorPosition(pos: number) {
+    this.cursorPosition = pos
+    this.cursor = Automerge.getCursor(
+      this.doc,
+      ["content"],
+      pos
+    )
+  }
+}
+```
+
+## Sharing cursors with peers
+
+Cursors are stable across documents, so you can share them:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// On peer 1
+let doc1 = Automerge.from({ text: "Hello" })
+const cursor = Automerge.getCursor(doc1, ["text"], 5)
+
+// Send cursor string to peer 2
+socket.send(JSON.stringify({ cursor, userId: "user1" }))
+
+// On peer 2
+let doc2 = Automerge.clone(doc1)
+
+// Receive cursor from peer 1
+socket.on("cursor", ({ cursor, userId }) => {
+  const position = Automerge.getCursorPosition(doc2, ["text"], cursor)
+  
+  // Show peer 1's cursor at this position
+  showPeerCursor(userId, position)
+})
+```
+
+## Working with views
+
+Cursors work correctly with document views:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ text: "abc" })
+const cursor = Automerge.getCursor(doc, ["text"], 1)
+
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["text"], 1, 0, "x")
+})
+const heads = Automerge.getHeads(doc)
+
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["text"], 1, 0, "y")
+})
+
+// Create a view at an earlier point in history
+const view = Automerge.view(doc, heads)
+
+// Cursor position in the view
+const posInView = Automerge.getCursorPosition(view, ["text"], cursor)
+console.log(posInView) // 2 (after "ax")
+
+// Cursor position in current doc
+const posInDoc = Automerge.getCursorPosition(doc, ["text"], cursor)
+console.log(posInDoc) // 3 (after "ayx")
+```
+
+## Unicode considerations
+
+Cursors use JavaScript string indexing (UTF-16 code units):
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ text: "🇬🇧🇩🇪" })
+
+// Get cursor at the emoji boundary
+const cursor = Automerge.getCursor(
+  doc,
+  ["text"],
+  doc.text.indexOf("🇩🇪")
+)
+
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["text"], cursor, -2, "")  // Delete chars before
+  Automerge.splice(d, ["text"], cursor, -2, "")  // Delete chars before
+  Automerge.splice(d, ["text"], cursor, 0, "🇫🇷")  // Insert new emoji
+})
+
+console.log(doc.text) // "🇫🇷🇩🇪"
+```
+
+## Best practices
+
+<Tip>
+**Create cursors when needed**: Convert numeric positions to cursors when you need stability across edits.
+</Tip>
+
+<Tip>
+**Share cursors for presence**: Send cursor positions to other peers to show where everyone is editing.
+</Tip>
+
+<Tip>
+**Use end cursors for appending**: When appending to text, use an end cursor so it always inserts at the end.
+</Tip>
+
+<Warning>
+**Don't store positions as numbers**: Numeric positions become invalid when the document changes. Always convert to cursors for long-term storage.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Working with Text" icon="text" href="/guides/working-with-text">
+    Learn more about text editing operations
+  </Card>
+  <Card title="Marks and Formatting" icon="highlighter" href="/guides/marks-and-formatting">
+    Add rich text formatting to your content
+  </Card>
+</CardGroup>

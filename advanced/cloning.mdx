@@ -1,0 +1,341 @@
+---
+title: Cloning Documents
+description: Understanding when and why to use clone() in Automerge
+---
+
+## Why Cloning Is Necessary
+
+Automerge documents are immutable. When you make changes, you get a new document reference, but internally Automerge uses structural sharing for efficiency. This creates a constraint: **you cannot make mutating changes to a document when multiple references to its state exist**.
+
+<Warning>
+Attempting to modify a document that has been branched will result in the error:
+```
+Attempting to change an out of date document
+```
+</Warning>
+
+## The Problem: Multiple References
+
+Consider this code:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.init()
+let doc2 = Automerge.change(doc1, d => {
+  d.key = "value"
+})
+
+// ❌ This will throw an error!
+doc1 = Automerge.change(doc1, d => {
+  d.another = "value"
+})
+// Error: Attempting to change an out of date document
+```
+
+After the first `change()` call, both `doc1` and `doc2` point to shared internal state. Automerge prevents you from modifying `doc1` because it would invalidate `doc2`.
+
+## The Solution: Clone
+
+Use `clone()` to create a fully independent copy:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.init()
+let doc2 = Automerge.change(Automerge.clone(doc1), d => {
+  d.key = "value"
+})
+
+// ✅ Now this works!
+doc1 = Automerge.change(doc1, d => {
+  d.another = "value"
+})
+```
+
+## How Clone Works
+
+### Full Memory Copy
+
+Unlike `view()` which creates a cheap reference-based copy, `clone()` makes a full copy of the document's internal memory:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.from({ count: 1 })
+
+// view() is cheap but read-only at that point in time
+const viewed = Automerge.view(doc1, Automerge.getHeads(doc1))
+
+// clone() is more expensive but fully writable
+const cloned = Automerge.clone(doc1)
+
+// You can modify the clone
+const modified = Automerge.change(cloned, d => {
+  d.count = 2
+})
+```
+
+### New Actor ID
+
+By default, `clone()` generates a new random actor ID. This is important because it allows both documents to make independent changes without sequence number conflicts:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.init("actor-1")
+const doc2 = Automerge.clone(doc1)
+
+console.log(Automerge.getActorId(doc1)) // "actor-1"
+console.log(Automerge.getActorId(doc2)) // Random ID (different from actor-1)
+```
+
+### Custom Actor ID
+
+You can specify a custom actor ID when cloning:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.init("alice")
+const doc2 = Automerge.clone(doc1, "bob")
+
+console.log(Automerge.getActorId(doc2)) // "bob"
+```
+
+Or use `InitOptions` for more control:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.init()
+const doc2 = Automerge.clone(doc1, {
+  actor: "custom-actor",
+  freeze: true,
+  patchCallback: (patches, info) => {
+    console.log("Changes:", patches)
+  }
+})
+```
+
+## Common Patterns
+
+### Pattern 1: Merging Documents
+
+The most common use case is when merging documents. Both arguments to `merge()` become frozen, so you need to clone one or both:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type DocType = { ideas: string[] }
+
+let doc1 = Automerge.init<DocType>()
+doc1 = Automerge.change(doc1, d => {
+  d.ideas = ["an immutable document"]
+})
+
+let doc2 = Automerge.init<DocType>()
+doc2 = Automerge.merge(doc2, Automerge.clone(doc1))
+doc2 = Automerge.change(doc2, d => {
+  d.ideas.push("which records its history")
+})
+
+// Clone before merging back
+doc1 = Automerge.merge(doc1, Automerge.clone(doc2))
+doc1 = Automerge.change(doc1, d => {
+  d.ideas.push("and merges changes")
+})
+
+const doc3 = Automerge.merge(doc1, doc2)
+console.log(doc3.ideas)
+// ["an immutable document", "which records its history", "and merges changes"]
+```
+
+<Tip>
+As a rule of thumb: **clone before merge** if you plan to continue editing either document afterward.
+</Tip>
+
+### Pattern 2: Creating Independent Branches
+
+Clone to create independent editing contexts:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let main = Automerge.from({ version: 1, features: [] })
+
+// Create an experimental branch
+let experimental = Automerge.clone(main, "experimental-branch")
+experimental = Automerge.change(experimental, d => {
+  d.features.push("new-feature")
+  d.version = 2
+})
+
+// Continue working on main
+main = Automerge.change(main, d => {
+  d.features.push("stable-feature")
+})
+
+// Later, merge experimental back if successful
+main = Automerge.merge(main, experimental)
+```
+
+### Pattern 3: Cloning a View
+
+If you have a view of a document at a specific point in time and want to make it writable:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ key1: "value1" })
+const heads = Automerge.getHeads(doc)
+
+doc = Automerge.change(doc, d => { d.key2 = "value2" })
+doc = Automerge.change(doc, d => { d.key3 = "value3" })
+
+// Create a view at the earlier point
+const viewed = Automerge.view(doc, heads)
+console.log(viewed) // { key1: "value1" }
+
+// Clone the view to make it writable
+let writable = Automerge.clone(viewed)
+writable = Automerge.change(writable, d => {
+  d.alternate = "path"
+})
+```
+
+## Clone vs View
+
+| Feature | `clone()` | `view()` |
+|---------|-----------|----------|
+| **Performance** | Expensive (full copy) | Cheap (reference-based) |
+| **Memory** | Allocates new memory | Shares memory |
+| **Mutability** | Fully writable | Read-only snapshot |
+| **Actor ID** | New actor ID generated | Same actor ID |
+| **Use case** | Creating independent branches | Examining history |
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ count: 1 })
+const heads = Automerge.getHeads(doc)
+
+doc = Automerge.change(doc, d => { d.count = 2 })
+
+// View: cheap, read-only
+const v = Automerge.view(doc, heads)
+console.log(v.count) // 1
+// Can't modify v directly
+
+// Clone: expensive, writable
+const c = Automerge.clone(v)
+const modified = Automerge.change(c, d => {
+  d.count = 10 // ✅ Works!
+})
+```
+
+## Performance Considerations
+
+<Warning>
+`clone()` performs a full memory copy, which can be expensive for large documents. Use it judiciously:
+- Only clone when you need to continue editing both branches
+- Consider using `view()` for read-only snapshots
+- In sync scenarios, avoid unnecessary cloning
+</Warning>
+
+### Efficient Cloning
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// ❌ Inefficient: cloning on every change
+let doc = Automerge.init()
+for (let i = 0; i < 100; i++) {
+  const temp = Automerge.clone(doc) // Wasteful!
+  doc = Automerge.change(temp, d => {
+    d.count = i
+  })
+}
+
+// ✅ Efficient: only clone when branching
+let doc = Automerge.init()
+for (let i = 0; i < 100; i++) {
+  doc = Automerge.change(doc, d => {
+    d.count = i
+  })
+}
+
+// Only clone when creating a branch
+const branch = Automerge.clone(doc)
+```
+
+## When to Clone
+
+<Tip>
+Clone when:
+1. **Merging documents** - If you plan to continue editing after merge
+2. **Creating branches** - For independent parallel development
+3. **Distributing to peers** - When sending a document to another peer
+4. **Converting views to writable docs** - When you need to modify a historical snapshot
+</Tip>
+
+## Common Errors and Solutions
+
+### Error: "Attempting to change an out of date document"
+
+```typescript
+// ❌ Problem
+let doc1 = Automerge.init()
+let doc2 = doc1 // Same reference
+doc2 = Automerge.change(doc2, d => { d.x = 1 })
+doc1 = Automerge.change(doc1, d => { d.y = 2 }) // Error!
+
+// ✅ Solution: Clone
+let doc1 = Automerge.init()
+let doc2 = Automerge.clone(doc1)
+doc2 = Automerge.change(doc2, d => { d.x = 1 })
+doc1 = Automerge.change(doc1, d => { d.y = 2 }) // Works!
+```
+
+### Error after merge
+
+```typescript
+// ❌ Problem
+let doc1 = Automerge.from({ a: 1 })
+let doc2 = Automerge.from({ b: 2 })
+let merged = Automerge.merge(doc1, doc2)
+doc1 = Automerge.change(doc1, d => { d.a = 3 }) // Error!
+
+// ✅ Solution: Clone before merge
+let doc1 = Automerge.from({ a: 1 })
+let doc2 = Automerge.from({ b: 2 })
+let merged = Automerge.merge(Automerge.clone(doc1), Automerge.clone(doc2))
+doc1 = Automerge.change(doc1, d => { d.a = 3 }) // Works!
+```
+
+## Best Practices
+
+1. **Clone defensively before merge** - If in doubt, clone both arguments to `merge()`
+2. **Use view() for history inspection** - Don't clone just to look at old states
+3. **Clone once per branch** - Don't clone repeatedly in loops
+4. **Set meaningful actor IDs** - When cloning, provide actor IDs that identify the branch or peer
+5. **Handle patch callbacks** - Set up appropriate callbacks when cloning for UI updates
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// Good pattern: Clone with proper setup
+function createBranch(doc, branchName, onPatches) {
+  return Automerge.clone(doc, {
+    actor: `branch-${branchName}`,
+    patchCallback: onPatches
+  })
+}
+
+const main = Automerge.from({ version: 1 })
+const experimental = createBranch(
+  main,
+  "experimental",
+  (patches, info) => console.log("Branch updated:", patches)
+)
+```

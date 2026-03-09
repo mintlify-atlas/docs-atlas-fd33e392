@@ -1,0 +1,372 @@
+---
+title: 'Changes'
+description: 'How changes work in Automerge and change tracking'
+---
+
+# Changes in Automerge
+
+Changes are the fundamental unit of modification in Automerge. Every edit to a document is captured as a change that can be transmitted, stored, and replayed.
+
+## The Change Function
+
+The `change()` function is how you modify Automerge documents. It takes a callback function where you can mutate a proxy object:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.init<any>()
+
+doc = Automerge.change(doc, d => {
+  d.hello = "world"
+})
+
+console.log(doc.hello) // "world"
+```
+
+<Note>
+Inside the `change()` callback, `d` is a **mutable proxy** that records your modifications. Outside the callback, `doc` is **immutable**.
+</Note>
+
+### Basic Change Operations
+
+```typescript
+type Task = {
+  description: string
+  done: boolean
+  priority?: number
+}
+
+type TodoDoc = {
+  tasks: Task[]
+  owner: string
+}
+
+let doc = Automerge.init<TodoDoc>()
+
+doc = Automerge.change(doc, d => {
+  // Set properties
+  d.owner = "Alice"
+  
+  // Create arrays
+  d.tasks = []
+  
+  // Add to arrays
+  d.tasks.push({ 
+    description: "Buy groceries", 
+    done: false 
+  })
+  
+  // Modify nested objects
+  d.tasks[0].priority = 1
+  
+  // Delete properties
+  delete d.tasks[0].priority
+})
+```
+
+## Change Options
+
+You can provide metadata with changes:
+
+### Adding Messages
+
+```typescript
+doc = Automerge.change(doc, "add new task", d => {
+  d.tasks.push({ description: "Walk dog", done: false })
+})
+```
+
+### Timestamps
+
+```typescript
+doc = Automerge.change(doc, {
+  message: "mark task complete",
+  time: Math.floor(Date.now() / 1000) // Unix timestamp in seconds
+}, d => {
+  d.tasks[0].done = true
+})
+```
+
+<Note>
+Timestamps are **purely advisory** and not used in conflict resolution. They default to the current time if not specified.
+</Note>
+
+### Patch Callbacks
+
+Get notified of what changed:
+
+```typescript
+let patchedPath: any
+
+doc = Automerge.change(doc, {
+  message: "update value",
+  patchCallback: (patches, info) => {
+    console.log("Patches:", patches)
+    console.log("Before:", info.before)
+    console.log("After:", info.after)
+    console.log("Source:", info.source)
+    patchedPath = patches[0]?.path
+  }
+}, d => {
+  d.newKey = "newValue"
+})
+
+console.log(patchedPath) // ["newKey"]
+```
+
+## List Operations
+
+Automerge provides special methods for working with arrays:
+
+### insertAt()
+
+Insert elements at a specific index:
+
+```typescript
+let doc = Automerge.from({ items: [1, 2, 3] })
+
+doc = Automerge.change(doc, d => {
+  Automerge.insertAt(d.items, 1, 1.5)
+})
+// items is now [1, 1.5, 2, 3]
+
+// Or use the method directly on the list:
+doc = Automerge.change(doc, d => {
+  d.items.insertAt(0, 0.5)
+})
+// items is now [0.5, 1, 1.5, 2, 3]
+```
+
+### deleteAt()
+
+Delete elements at a specific index:
+
+```typescript
+doc = Automerge.change(doc, d => {
+  Automerge.deleteAt(d.items, 1, 2) // delete 2 elements starting at index 1
+})
+// items is now [0.5, 2, 3]
+
+// Or use the method directly:
+doc = Automerge.change(doc, d => {
+  d.items.deleteAt(0) // delete 1 element at index 0
+})
+// items is now [2, 3]
+```
+
+<Warning>
+`insertAt()` and `deleteAt()` can only be used inside a `change()` callback. Using them outside will throw an error:
+```
+"object cannot be modified outside of a change block"
+```
+</Warning>
+
+## Working with Text
+
+The `Text` type is optimized for collaborative text editing:
+
+```typescript
+type DocType = { 
+  notes: Automerge.Text 
+}
+
+let doc = Automerge.init<DocType>()
+
+doc = Automerge.change(doc, d => {
+  d.notes = new Automerge.Text("Hello world")
+})
+
+doc = Automerge.change(doc, d => {
+  // Delete "Hello " (6 characters starting at index 0)
+  d.notes.deleteAt(0, 6)
+  
+  // Insert "Goodbye " at the beginning
+  d.notes.insertAt(0, "Goodbye ")
+})
+
+console.log(d.notes.toString()) // "Goodbye world"
+```
+
+## Counters
+
+The `Counter` type supports concurrent increment/decrement:
+
+```typescript
+let doc = Automerge.from({
+  likes: new Automerge.Counter(0)
+})
+
+doc = Automerge.change(doc, d => {
+  d.likes.increment(1)
+})
+
+doc = Automerge.change(doc, d => {
+  d.likes.increment(5)
+  d.likes.decrement(2)
+})
+
+console.log(doc.likes.value) // 4
+```
+
+<Tip>
+Counters are CRDTs that handle concurrent increments correctly. If two users both increment a counter, both increments will be preserved when their changes merge.
+</Tip>
+
+## Empty Changes
+
+Sometimes you need to create a change that doesn't modify the document:
+
+```typescript
+doc = Automerge.emptyChange(doc, "checkpoint")
+```
+
+Use cases for empty changes:
+- Creating a dependency on merged changes for signing
+- Marking synchronization points
+- Adding timestamped checkpoints without modifications
+
+## Getting the Last Change
+
+After making a change, you can get its binary representation:
+
+```typescript
+let doc = Automerge.from({ value: 1 })
+
+doc = Automerge.change(doc, d => {
+  d.value = 2
+})
+
+const lastChange = Automerge.getLastLocalChange(doc)
+// Returns Uint8Array or undefined
+
+if (lastChange) {
+  // Send to other peers, save to disk, etc.
+  sendToOtherPeers(lastChange)
+}
+```
+
+## Applying Changes
+
+Receive and apply changes from other peers:
+
+```typescript
+let doc1 = Automerge.init<any>()
+let doc2 = Automerge.init<any>()
+
+// doc1 makes changes
+doc1 = Automerge.change(doc1, d => {
+  d.x = 1
+})
+doc1 = Automerge.change(doc1, d => {
+  d.y = 2
+})
+
+// Get all changes from doc1
+const changes = Automerge.getAllChanges(doc1)
+
+// Apply them to doc2
+;[doc2] = Automerge.applyChanges(doc2, changes)
+
+console.log(doc2) // { x: 1, y: 2 }
+```
+
+### Getting Specific Changes
+
+Get only the changes between two document states:
+
+```typescript
+let doc = Automerge.from({ value: 1 })
+const oldState = doc
+
+doc = Automerge.change(doc, d => d.value = 2)
+doc = Automerge.change(doc, d => d.value = 3)
+
+// Get changes since oldState
+const changes = Automerge.getChanges(oldState, doc)
+
+// Apply to another document
+let doc2 = Automerge.clone(oldState)
+;[doc2] = Automerge.applyChanges(doc2, changes)
+
+console.log(doc2.value) // 3
+```
+
+## Change History
+
+Automerge maintains complete history:
+
+```typescript
+let doc = Automerge.from({ counter: 0 })
+
+for (let i = 1; i <= 5; i++) {
+  doc = Automerge.change(doc, `increment to ${i}`, d => {
+    d.counter = i
+  })
+}
+
+// Get complete history
+const history = Automerge.getHistory(doc)
+
+history.forEach(state => {
+  console.log(state.change.message, "->", state.snapshot.counter)
+})
+// Output:
+// "increment to 1" -> 1
+// "increment to 2" -> 2
+// "increment to 3" -> 3
+// "increment to 4" -> 4
+// "increment to 5" -> 5
+```
+
+## ChangeAt: Historical Branching
+
+`changeAt()` allows you to make changes as if the document was at a particular point in history:
+
+```typescript
+let doc = Automerge.from({ key1: "value1" })
+
+const heads = Automerge.getHeads(doc)
+
+// Make more changes
+doc = Automerge.change(doc, d => d.key2 = "value2")
+doc = Automerge.change(doc, d => d.key3 = "value3")
+
+// Make a change "back in time" at heads
+const result = Automerge.changeAt(doc, heads, d => {
+  d.branch = "historical"
+})
+
+doc = result.newDoc
+const newHeads = result.newHeads
+
+// The change is added as if concurrent with later changes
+```
+
+<Tip>
+`changeAt()` is useful for reconciling external state (like a text editor) with an Automerge document without blocking the UI.
+</Tip>
+
+## Nested Change Calls
+
+<Warning>
+You **cannot** nest `change()` calls. This will throw an error:
+
+```typescript
+doc = Automerge.change(doc, d => {
+  d.value = 1
+  
+  // ERROR: Cannot nest change calls!
+  doc = Automerge.change(doc, d2 => {
+    d2.other = 2
+  })
+})
+```
+
+Make all your changes in a single callback instead.
+</Warning>
+
+## Next Steps
+
+- Learn about [Merging](/concepts/merging) to combine changes from multiple sources
+- Understand [Conflicts](/concepts/conflicts) when concurrent changes collide
+- Explore [Sync](/concepts/sync) to transmit changes between peers efficiently

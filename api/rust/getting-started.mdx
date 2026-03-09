@@ -1,0 +1,270 @@
+---
+title: Getting Started with Rust
+description: Start building with the Automerge Rust API
+---
+
+<Note>
+The Rust API is lower-level than the JavaScript API and is primarily designed as a backend for the JavaScript wrapper. For a more ergonomic Rust experience, consider using [autosurgeon](https://github.com/automerge/autosurgeon).
+</Note>
+
+## Installation
+
+Add Automerge to your `Cargo.toml`:
+
+```toml
+[dependencies]
+automerge = "0.7.4"
+```
+
+### Optional Features
+
+The crate supports several optional features:
+
+```toml
+[dependencies]
+automerge = { version = "0.7.4", features = ["wasm", "utf16-indexing"] }
+```
+
+Available features:
+- `wasm` - Enable WebAssembly support
+- `utf16-indexing` - Use UTF-16 encoding for text (default is UTF-8, except on wasm target)
+- `utf8-indexing` - Explicitly use UTF-8 encoding
+- `optree-visualisation` - Enable operation tree visualization
+
+## Basic Usage
+
+### Using AutoCommit (Recommended)
+
+The `AutoCommit` type manages transactions automatically:
+
+```rust
+use automerge::{ObjType, AutoCommit, transaction::Transactable, ReadDoc};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut doc = AutoCommit::new();
+
+    // Create a nested list object
+    let contacts = doc.put_object(automerge::ROOT, "contacts", ObjType::List)?;
+
+    // Insert a map into the list
+    let alice = doc.insert_object(&contacts, 0, ObjType::Map)?;
+
+    // Set values in the map
+    doc.put(&alice, "name", "Alice")?;
+    doc.put(&alice, "email", "alice@example.com")?;
+
+    // Save the document to binary format
+    let data: Vec<u8> = doc.save();
+    
+    Ok(())
+}
+```
+
+### Manual Transaction Management
+
+For more control, use `Automerge` with explicit transactions:
+
+```rust
+use automerge::transaction::CommitOptions;
+use automerge::transaction::Transactable;
+use automerge::{Automerge, AutomergeError, ObjType, ReadDoc, ROOT};
+
+fn main() {
+    let mut doc1 = Automerge::new();
+    
+    let (cards, card1) = doc1
+        .transact_with::<_, _, AutomergeError, _>(
+            |_| CommitOptions::default().with_message("Add card".to_owned()),
+            |tx| {
+                let cards = tx.put_object(ROOT, "cards", ObjType::List).unwrap();
+                let card1 = tx.insert_object(&cards, 0, ObjType::Map)?;
+                tx.put(&card1, "title", "Rewrite everything in Clojure")?;
+                tx.put(&card1, "done", false)?;
+                Ok((cards, card1))
+            },
+        )
+        .unwrap()
+        .result;
+
+    // Save and load
+    let binary = doc1.save();
+    let mut doc2 = Automerge::load(&binary).unwrap();
+}
+```
+
+## Merging Documents
+
+Merge changes from different replicas:
+
+```rust
+use automerge::AutoCommit;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut doc1 = AutoCommit::new();
+    let mut doc2 = AutoCommit::new();
+    
+    // Load same initial state
+    let saved = doc1.save();
+    doc2 = AutoCommit::load(&saved)?;
+    
+    // Make changes on doc1
+    // ... modifications ...
+    
+    // Make different changes on doc2
+    // ... modifications ...
+    
+    // Merge doc2's changes into doc1
+    doc1.merge(&mut doc2)?;
+    
+    Ok(())
+}
+```
+
+## Working with Data
+
+### Object Types
+
+Automerge supports three composite object types:
+
+- `ObjType::Map` - Key-value maps
+- `ObjType::List` - Ordered sequences
+- `ObjType::Text` - Text sequences (unicode characters)
+
+### Scalar Values
+
+Supported primitive values:
+
+- Strings
+- 64-bit floats, signed integers, and unsigned integers
+- Booleans
+- Counters (merge by addition)
+- Timestamps (milliseconds since Unix epoch)
+- Null values
+- Raw bytes
+
+### Reading Values
+
+Both `Automerge` and `AutoCommit` implement the `ReadDoc` trait:
+
+```rust
+use automerge::{AutoCommit, ReadDoc, Value};
+use std::borrow::Cow;
+
+let doc = AutoCommit::new();
+// ... make changes ...
+
+// Read a value
+if let Some((value, obj_id)) = doc.get(automerge::ROOT, "key")? {
+    match value {
+        Value::Scalar(s) => println!("Scalar: {:?}", s),
+        Value::Object(obj_type) => println!("Object: {:?}", obj_type),
+    }
+}
+
+// Get all conflicting values
+let all_values = doc.get_all(automerge::ROOT, "key")?;
+```
+
+## Advanced Features
+
+### Sync Protocol
+
+Efficiently synchronize documents over a network:
+
+```rust
+use automerge::sync::SyncDoc;
+
+// Generate a sync message
+let mut sync_state = automerge::sync::State::new();
+let message = doc1.sync().generate_sync_message(&mut sync_state)?;
+
+// Receive and apply on another document
+let patch_log = automerge::patches::PatchLog::new();
+doc2.sync().receive_sync_message_log_patches(
+    &mut sync_state,
+    message,
+    &mut patch_log
+)?;
+```
+
+### Patch System
+
+Capture incremental changes for UI updates:
+
+```rust
+use automerge::patches::PatchLog;
+
+let mut patch_log = PatchLog::new();
+
+// Perform operations with patch tracking
+doc.put_log_patches(&alice, "email", "newemail@example.com", &mut patch_log)?;
+
+// Get the patches
+let patches = doc.make_patches(&mut patch_log);
+for patch in patches {
+    // Apply to your materialized view
+    println!("Patch: {:?}", patch);
+}
+```
+
+### Cursors
+
+Track positions in sequences across concurrent edits:
+
+```rust
+// Create a cursor at a specific position
+let cursor = doc.get_cursor(&text_obj, 5, None)?;
+
+// After remote changes, get the updated position
+if let Some(position) = doc.get_cursor_position(&text_obj, &cursor, None)? {
+    println!("Cursor is now at position: {}", position);
+}
+```
+
+## API Reference
+
+<Note>
+For complete API documentation, including all types, traits, and functions, visit [docs.rs/automerge](https://docs.rs/automerge/latest/automerge/).
+</Note>
+
+Key modules to explore:
+
+- **`automerge`** - Core document types (`Automerge`, `AutoCommit`)
+- **`transaction`** - Transaction management and the `Transactable` trait
+- **`sync`** - Synchronization protocol implementation
+- **`patches`** - Patch generation for incremental updates
+- **`types`** - Core types like `ActorId`, `ObjType`, `ChangeHash`
+
+## Examples
+
+The Automerge repository includes example code:
+
+- **quickstart.rs** - Basic document operations and merging
+- **watch.rs** - Observing changes with patches
+
+Find these in `rust/automerge/examples/` in the [GitHub repository](https://github.com/automerge/automerge).
+
+## Higher-Level Rust API
+
+For a more ergonomic Rust experience with serde integration:
+
+<Card title="Autosurgeon" icon="code" href="https://github.com/automerge/autosurgeon" target="_blank">
+  A higher-level Rust library that provides serde-based serialization and a more idiomatic Rust API on top of Automerge.
+</Card>
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="book" href="https://docs.rs/automerge/latest/automerge/" target="_blank">
+    Complete Rust API documentation
+  </Card>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/automerge/automerge" target="_blank">
+    Source code and examples
+  </Card>
+  <Card title="Autosurgeon" icon="wrench" href="https://github.com/automerge/autosurgeon" target="_blank">
+    Higher-level Rust API
+  </Card>
+  <Card title="Discord Community" icon="discord" href="https://discord.gg/HrpnPAU5zx" target="_blank">
+    Get help and discuss Automerge
+  </Card>
+</CardGroup>

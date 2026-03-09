@@ -1,0 +1,134 @@
+---
+title: Introduction
+description: A JSON-like data structure (a CRDT) that can be modified concurrently by different users, and merged again automatically
+---
+
+<div className="bg-[#F9C72B] border-2 border-black p-8 rounded-none shadow-none mb-8">
+  <h1 className="text-4xl font-normal text-[#1A1A1A] mb-4">Automerge</h1>
+  <p className="text-lg text-[#1A1A1A]">
+    Build local-first collaborative applications with CRDTs
+  </p>
+</div>
+
+Automerge is a library that provides fast implementations of several different **Conflict-free Replicated Data Types (CRDTs)**, a compact compression format, and a sync protocol for efficiently transmitting changes over the network. 
+
+The objective of the project is to support [local-first](https://www.inkandswitch.com/local-first/) applications in the same way that relational databases support server applications — by providing mechanisms for persistence which allow application developers to avoid thinking about hard distributed computing problems.
+
+<Note>
+  Automerge aims to be **PostgreSQL for your local-first app**.
+</Note>
+
+## Why Automerge?
+
+<CardGroup cols={2}>
+  <Card title="Local-First Architecture" icon="laptop">
+    Work offline, sync when connected. Your app works without a server.
+  </Card>
+  <Card title="Automatic Conflict Resolution" icon="arrows-merge">
+    Merge concurrent changes automatically without losing data.
+  </Card>
+  <Card title="Rich Data Structures" icon="database">
+    JSON-like documents with lists, maps, text, and custom types.
+  </Card>
+  <Card title="Efficient Sync Protocol" icon="arrows-rotate">
+    Incremental sync minimizes network traffic for real-time collaboration.
+  </Card>
+</CardGroup>
+
+## Key Features
+
+Automerge provides a comprehensive toolkit for building collaborative applications:
+
+- **CRDTs** — Conflict-free Replicated Data Types allow multiple users to modify data concurrently and merge changes automatically
+- **Document History** — Every change is preserved, enabling time travel, undo/redo, and audit trails
+- **Rich Text Editing** — Built-in support for collaborative text editing with marks and formatting
+- **Efficient Storage** — Compact binary format with compression reduces storage and network overhead
+- **Network Sync** — Stateful sync protocol efficiently transmits only the changes needed
+- **Multi-Language Support** — Available for JavaScript (Node.js and browsers), Rust, and C
+
+## How It Works
+
+Automerge documents are **immutable snapshots** that track their complete history. When you make changes, you create a new document version:
+
+```typescript
+import * as automerge from "@automerge/automerge"
+
+// Create a new document
+let doc = automerge.from({
+  tasks: [
+    { description: "feed fish", done: false },
+    { description: "water plants", done: false }
+  ]
+})
+
+// Make a change
+doc = automerge.change(doc, d => {
+  d.tasks[0].done = true
+})
+```
+
+Multiple users can work on the same document concurrently, and Automerge will **merge their changes automatically**:
+
+```typescript
+// User 1 and User 2 start with the same document
+let doc1 = automerge.clone(doc)
+let doc2 = automerge.clone(doc)
+
+// User 1 completes a task
+doc1 = automerge.change(doc1, d => {
+  d.tasks[0].done = true
+})
+
+// User 2 adds a new task
+doc2 = automerge.change(doc2, d => {
+  d.tasks.push({ description: "water fish", done: false })
+})
+
+// Merge the changes — both operations are preserved
+doc1 = automerge.merge(doc1, doc2)
+```
+
+## Architecture
+
+Automerge is designed as a **core library** that other systems can build upon:
+
+<Steps>
+  <Step title="Core CRDT Library">
+    Written in Rust, compiled to WebAssembly for JavaScript, with FFI bindings for C
+  </Step>
+  <Step title="Language Wrappers">
+    Idiomatic APIs for JavaScript, Rust, and C applications
+  </Step>
+  <Step title="Your Application">
+    Build on top of Automerge for persistence, sync, and collaboration
+  </Step>
+</Steps>
+
+The Rust implementation provides the performance-critical operations, while language-specific wrappers provide ergonomic APIs for each ecosystem.
+
+## Use Cases
+
+Automerge is ideal for applications that need:
+
+- **Offline-first functionality** — Users can work without connectivity and sync later
+- **Real-time collaboration** — Multiple users editing the same document simultaneously
+- **Conflict-free merging** — Automatic resolution of concurrent changes
+- **Complete audit trail** — Full history of all changes for compliance or debugging
+- **Decentralized architecture** — No central server required for basic operation
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Automerge in your project
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first Automerge application
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/crdts">
+    Learn about CRDTs and how Automerge works
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>

@@ -1,0 +1,217 @@
+---
+title: Actor IDs
+description: Understanding actor IDs and their role in concurrent editing
+---
+
+## What Are Actor IDs?
+
+Actor IDs are unique identifiers that distinguish different participants ("actors") making changes to an Automerge document. Every change you make to a document is tagged with an actor ID, which is essential for Automerge's conflict resolution algorithm.
+
+<Note>
+Actor IDs are crucial for maintaining causality and ordering in distributed systems. They allow Automerge to determine which changes happened concurrently and need to be merged.
+</Note>
+
+## Getting the Actor ID
+
+You can retrieve the actor ID associated with a document using `getActorId()`:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+const doc = Automerge.init()
+const actorId = Automerge.getActorId(doc)
+console.log(actorId) // e.g., "1a2b3c4d5e6f7890"
+```
+
+## Setting Custom Actor IDs
+
+By default, Automerge generates a random actor ID for each document. However, you can specify a custom actor ID when creating or cloning a document:
+
+### During Initialization
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+const doc = Automerge.init("actor-123")
+console.log(Automerge.getActorId(doc)) // "actor-123"
+```
+
+### When Cloning
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.init("actor-1")
+doc1 = Automerge.change(doc1, d => {
+  d.counter = 1
+})
+
+// Clone with a new actor ID
+const doc2 = Automerge.clone(doc1, "actor-2")
+console.log(Automerge.getActorId(doc2)) // "actor-2"
+```
+
+### Using InitOptions
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+const doc = Automerge.init({
+  actor: "my-custom-actor-id",
+  freeze: true
+})
+```
+
+## Why Actor IDs Matter
+
+### 1. Conflict Resolution
+
+When multiple actors make concurrent changes to the same property, Automerge uses actor IDs to deterministically choose which value to display:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type Profile = {
+  pets: Array<{name: string, type: string}>
+}
+
+let doc1 = Automerge.init<Profile>("aaaa")
+doc1 = Automerge.change(doc1, d => {
+  d.pets = [{name: "Lassie", type: "dog"}]
+})
+
+let doc2 = Automerge.init<Profile>("bbbb")
+doc2 = Automerge.merge(doc2, Automerge.clone(doc1))
+
+// Both actors edit the same property concurrently
+doc2 = Automerge.change(doc2, d => {
+  d.pets[0].name = "Beethoven"
+})
+
+doc1 = Automerge.change(doc1, d => {
+  d.pets[0].name = "Babe"
+})
+
+// Merge creates a deterministic result
+const doc3 = Automerge.merge(doc1, doc2)
+console.log(doc3.pets[0].name) // One value chosen deterministically
+
+// You can see all conflicting values
+const conflicts = Automerge.getConflicts(doc3.pets[0], "name")
+console.log(Object.values(conflicts)) // ["Babe", "Beethoven"]
+```
+
+### 2. Change Attribution
+
+Actor IDs allow you to track who made which changes:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.init("alice")
+doc = Automerge.change(doc, d => {
+  d.message = "Hello from Alice"
+})
+
+const changes = Automerge.getAllChanges(doc)
+const decoded = Automerge.decodeChange(changes[0])
+console.log(decoded.actor) // "alice"
+```
+
+### 3. Maintaining Causality
+
+Actor IDs combined with sequence numbers ensure that changes from the same actor are applied in the correct order, maintaining causality even in distributed systems.
+
+## Important Constraints
+
+<Warning>
+**Never use the same actor ID in concurrent threads or processes.** All changes by a given actor ID are expected to be sequential. Using the same actor ID concurrently can lead to sequence number conflicts and data corruption.
+</Warning>
+
+### Sequential Changes Only
+
+Each actor ID must only be used for sequential changes:
+
+```typescript
+// ✅ GOOD: Sequential changes with one actor ID
+let doc = Automerge.init("actor-1")
+doc = Automerge.change(doc, d => { d.count = 1 })
+doc = Automerge.change(doc, d => { d.count = 2 })
+
+// ❌ BAD: Don't use the same actor ID in concurrent processes
+// Process 1:
+let doc1 = Automerge.init("shared-actor") // BAD!
+doc1 = Automerge.change(doc1, d => { d.value = "A" })
+
+// Process 2 (concurrent):
+let doc2 = Automerge.init("shared-actor") // BAD!
+doc2 = Automerge.change(doc2, d => { d.value = "B" })
+```
+
+### When to Use Custom Actor IDs
+
+<Tip>
+Custom actor IDs are useful when:
+- You want to identify specific users or devices
+- You're implementing user attribution features
+- You need consistent actor IDs across application restarts
+- You're debugging and want readable identifiers
+</Tip>
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// Use user ID as actor ID for attribution
+function createUserDocument(userId: string) {
+  return Automerge.init(`user-${userId}`)
+}
+
+const aliceDoc = createUserDocument("alice")
+const bobDoc = createUserDocument("bob")
+```
+
+## Actor IDs and Cloning
+
+When you clone a document, you typically want a new actor ID to avoid conflicts:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.init("actor-1")
+doc1 = Automerge.change(doc1, d => {
+  d.ideas = ["Build something amazing"]
+})
+
+// Clone automatically generates a new actor ID
+const doc2 = Automerge.clone(doc1)
+console.log(Automerge.getActorId(doc2)) // Different from "actor-1"
+
+// Both can now make independent changes
+doc1 = Automerge.change(doc1, d => {
+  d.ideas.push("Learn CRDTs")
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.ideas.push("Share knowledge")
+})
+
+// Merge back together
+const merged = Automerge.merge(doc1, doc2)
+console.log(merged.ideas)
+// ["Build something amazing", "Learn CRDTs", "Share knowledge"]
+```
+
+## Best Practices
+
+1. **Use meaningful actor IDs in production** - Include user IDs, device IDs, or session IDs for better debugging
+2. **Generate new actor IDs when forking** - Always use a new actor ID when creating an independent copy
+3. **Store actor IDs with documents** - If you need to reload documents, preserve the actor ID for continuity
+4. **Never reuse actor IDs** - Each independent editing context needs its own unique actor ID
+
+<Tip>
+For multi-device scenarios, use a combination of user ID and device ID:
+```typescript
+const actorId = `user-${userId}-device-${deviceId}`
+const doc = Automerge.init(actorId)
+```
+</Tip>

@@ -1,0 +1,158 @@
+---
+title: 'CRDTs'
+description: 'Understanding Conflict-free Replicated Data Types in Automerge'
+---
+
+# What are CRDTs?
+
+Automerge is built on **Conflict-free Replicated Data Types** (CRDTs), which are data structures that can be replicated across multiple computers, modified independently and concurrently, and then merged back together automatically without conflicts.
+
+## Why Automerge Uses CRDTs
+
+Automerge provides fast implementations of several different CRDTs to support local-first applications. The objective is to be like PostgreSQL for your local-first app - providing persistence mechanisms that allow you to avoid thinking about hard distributed computing problems.
+
+<Note>
+Local-first applications prioritize local data and local computation, with network synchronization happening in the background. This approach gives users:
+- Instant responsiveness
+- Offline capability
+- Data ownership
+- Privacy and security
+</Note>
+
+## How CRDTs Work in Automerge
+
+CRDTs enable automatic conflict resolution through mathematical properties that guarantee eventual consistency. When two peers make concurrent changes, the CRDT algorithms ensure that both peers will arrive at the same final state when they sync.
+
+### Core Principles
+
+1. **Commutativity**: Operations can be applied in any order
+2. **Associativity**: Grouping of operations doesn't matter
+3. **Idempotence**: Applying the same operation multiple times has the same effect as applying it once
+
+These properties allow Automerge to:
+- Merge changes from multiple sources automatically
+- Support offline editing with guaranteed convergence
+- Enable peer-to-peer collaboration without a central server
+
+## CRDT Types in Automerge
+
+Automerge implements several CRDT types to represent different data structures:
+
+### Maps (Objects)
+
+JavaScript objects are represented as CRDT maps where each key can be independently updated.
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({
+  title: "My Document",
+  author: "Alice"
+})
+
+doc = Automerge.change(doc, d => {
+  d.title = "Updated Title"
+  d.lastModified = new Date()
+})
+```
+
+### Lists (Arrays)
+
+Arrays use a list CRDT that preserves insertion order and handles concurrent insertions intelligently.
+
+```typescript
+let doc = Automerge.from({ tasks: [] })
+
+doc = Automerge.change(doc, d => {
+  d.tasks.push({ description: "Buy milk", done: false })
+  d.tasks.push({ description: "Walk dog", done: false })
+})
+```
+
+### Text
+
+Automerge provides a specialized Text CRDT optimized for collaborative text editing.
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type DocType = { notes: Automerge.Text }
+
+let doc = Automerge.init<DocType>()
+doc = Automerge.change(doc, d => {
+  d.notes = new Automerge.Text("Hello world")
+})
+
+doc = Automerge.change(doc, d => {
+  d.notes.deleteAt(0, 5)
+  d.notes.insertAt(0, "Goodbye")
+})
+// doc.notes is now "Goodbye world"
+```
+
+### Counter
+
+Counters are CRDT types that support concurrent increment and decrement operations.
+
+```typescript
+let doc = Automerge.from({ 
+  likes: new Automerge.Counter(0) 
+})
+
+doc = Automerge.change(doc, d => {
+  d.likes.increment(1)
+  d.likes.increment(5)
+})
+// doc.likes.value is now 6
+```
+
+### Scalar Values
+
+Automerge supports various primitive types:
+- Strings
+- Numbers (with `Int`, `Uint`, `Float64` for specific numeric types)
+- Booleans
+- Null
+- Dates (stored as timestamps)
+- Byte arrays (`Uint8Array`)
+
+## CRDT Advantages
+
+<Tip>
+**Strong Eventual Consistency**: All replicas that have received the same set of updates will eventually reach the same state, without requiring coordination.
+</Tip>
+
+### Benefits for Application Developers
+
+1. **Automatic Merging**: No manual conflict resolution code needed
+2. **Offline-First**: Work continues seamlessly without network connectivity
+3. **Peer-to-Peer**: No central server required for synchronization
+4. **Time Travel**: Full history enables viewing any past state
+5. **Auditability**: Complete change history for compliance and debugging
+
+## Performance Characteristics
+
+Automerge 3 achieved significant performance improvements:
+- ~10x reduction in memory usage
+- Compact binary format for efficient storage and transmission
+- Optimized sync protocol for minimal network overhead
+
+<Warning>
+While CRDTs eliminate conflicts at the data structure level, they don't eliminate semantic conflicts. For example, two users might both assign different values to the same property simultaneously. Automerge resolves this deterministically, but you may want to present both values to users via `getConflicts()`.
+</Warning>
+
+## Binary Format and Compression
+
+Automerge uses a highly optimized binary format that:
+- Compresses change history efficiently
+- Enables incremental loading and saving
+- Supports efficient network synchronization
+- Maintains compatibility across versions
+
+For details on the binary format, see the [binary format specification](https://automerge.org/automerge-binary-format-spec).
+
+## Next Steps
+
+- Learn about [Documents](/concepts/documents) to understand Automerge's document model
+- Explore [Changes](/concepts/changes) to see how modifications are tracked
+- Understand [Merging](/concepts/merging) to see how changes combine

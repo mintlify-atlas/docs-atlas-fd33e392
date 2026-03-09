@@ -1,0 +1,272 @@
+---
+title: 'Documents'
+description: 'Understanding the Automerge document model and immutability'
+---
+
+# Documents in Automerge
+
+An Automerge document is an immutable POJO (Plain Old JavaScript Object) that Automerge tracks the complete history of. This allows it to be merged with any other Automerge document that shares the same history.
+
+## Creating Documents
+
+### Initializing an Empty Document
+
+Use `init()` to create a new empty document:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type DocType = {
+  title: string
+  counter: number
+}
+
+let doc = Automerge.init<DocType>()
+```
+
+### Creating from Existing Data
+
+Use `from()` to initialize a document with data:
+
+```typescript
+let doc = Automerge.from({
+  tasks: [
+    { description: "feed fish", done: false },
+    { description: "water plants", done: false }
+  ]
+})
+```
+
+<Note>
+The `from()` function creates an initial document state and applies your data as the first change. This is equivalent to calling `init()` followed by `change()`.
+</Note>
+
+## Immutability
+
+Automerge documents are **immutable**. Every modification returns a new document while leaving the original unchanged:
+
+```typescript
+let doc1 = Automerge.from({ value: 1 })
+let doc2 = Automerge.change(doc1, d => {
+  d.value = 2
+})
+
+// doc1 is unchanged
+console.log(doc1.value) // 1
+
+// doc2 has the new value
+console.log(doc2.value) // 2
+```
+
+### Why Immutability?
+
+Immutability provides several benefits:
+
+1. **Time Travel**: Keep references to old document states
+2. **Undo/Redo**: Easily implement by storing document history
+3. **Comparison**: Quickly check if documents are different with `===`
+4. **Debugging**: Past states remain accessible for inspection
+5. **React Integration**: Works naturally with React's reconciliation
+
+<Tip>
+You can optionally freeze documents to prevent accidental mutations:
+
+```typescript
+let doc = Automerge.init({ freeze: true })
+// Document and all nested objects will be frozen
+```
+</Tip>
+
+## Document Structure
+
+Automerge documents mirror JavaScript's native data structures:
+
+```typescript
+type Profile = {
+  name: string
+  age: number
+  email: string | null
+  preferences: {
+    theme: string
+    notifications: boolean
+  }
+  tags: string[]
+  metadata?: Record<string, unknown>
+}
+
+let doc = Automerge.from<Profile>({
+  name: "Alice",
+  age: 30,
+  email: null,
+  preferences: {
+    theme: "dark",
+    notifications: true
+  },
+  tags: ["developer", "designer"]
+})
+```
+
+### Supported Types
+
+Automerge supports these JavaScript types:
+
+| Type | Example | Notes |
+|------|---------|-------|
+| String | `"hello"` | Regular JavaScript strings |
+| Number | `42`, `3.14` | Use `Int`, `Uint`, `Float64` for specific types |
+| Boolean | `true`, `false` | |
+| Null | `null` | |
+| Date | `new Date()` | Stored as timestamp |
+| Uint8Array | `new Uint8Array([1,2,3])` | Binary data |
+| Object | `{ key: "value" }` | Nested objects supported |
+| Array | `[1, 2, 3]` | With special list operations |
+| Text | `new Automerge.Text()` | Optimized for collaborative editing |
+| Counter | `new Automerge.Counter()` | CRDT counter type |
+
+## Cloning Documents
+
+When you need to work with multiple versions of a document, use `clone()`:
+
+```typescript
+let doc1 = Automerge.init()
+// This creates a reference, NOT a copy:
+let doc2 = Automerge.change(doc1, d => d.key = "value")
+
+// doc1 and doc2 share memory. Attempting to modify doc1 will fail!
+// Error: "Attempting to change an out of date document"
+
+// Correct approach:
+let doc1 = Automerge.init()
+let doc2 = Automerge.change(Automerge.clone(doc1), d => {
+  d.key = "value"
+})
+
+// Now both documents are independent
+```
+
+<Warning>
+You cannot make mutating changes to a document for which you have multiple pointers. Always clone the document first if you need independent copies.
+</Warning>
+
+### Clone with Actor ID
+
+Cloning automatically generates a new actor ID, but you can specify one:
+
+```typescript
+let doc2 = Automerge.clone(doc1, "custom-actor-id")
+```
+
+## Viewing Past States
+
+Use `view()` to create a cheap, read-only reference to a document at a specific point in history:
+
+```typescript
+let doc = Automerge.from({ key1: "value1" })
+
+const heads = Automerge.getHeads(doc)
+
+doc = Automerge.change(doc, d => {
+  d.key2 = "value2"
+})
+
+doc = Automerge.change(doc, d => {
+  d.key3 = "value3"
+})
+
+// View the document as it was at 'heads'
+let before = Automerge.view(doc, heads)
+
+console.log(before) // { key1: "value1" }
+```
+
+<Note>
+`view()` is a very cheap operation because it shares memory with the original document. However, the returned view cannot be modified with `change()`.
+</Note>
+
+If you need to modify a view, clone it first:
+
+```typescript
+let writable = Automerge.clone(Automerge.view(doc, heads))
+```
+
+## Actor IDs
+
+Each document has an **actor ID** that uniquely identifies the source of changes:
+
+```typescript
+// Random actor ID (default)
+let doc1 = Automerge.init()
+
+// Specified actor ID
+let doc2 = Automerge.init({ actor: "user-123" })
+
+// Get the actor ID
+const actorId = Automerge.getActorId(doc2) // "user-123"
+```
+
+<Warning>
+**Actor IDs must be unique per concurrent editing context.** Never use the same actor ID in multiple threads or processes editing simultaneously. All changes by a given actor ID are expected to be sequential.
+</Warning>
+
+## Heads and Document State
+
+**Heads** are hashes that represent the current state of a document:
+
+```typescript
+let doc = Automerge.from({ value: 1 })
+
+doc = Automerge.change(doc, d => d.value = 2)
+
+const heads = Automerge.getHeads(doc)
+// Returns array of hashes like: ["a1b2c3d4..."]
+```
+
+Heads are used for:
+- Comparing document states
+- Creating views of specific states
+- Syncing changes between peers
+- Determining what changes are missing
+
+## Checking if a Value is an Automerge Document
+
+```typescript
+const doc = Automerge.from({ sub: { object: true } })
+
+Automerge.isAutomerge(doc) // true
+Automerge.isAutomerge(doc.sub) // false (nested objects aren't separate docs)
+Automerge.isAutomerge({ plain: "object" }) // false
+```
+
+## Converting to Plain JavaScript
+
+Use `toJS()` to get a plain JavaScript object:
+
+```typescript
+const doc = Automerge.from({ name: "Alice" })
+const plain = Automerge.toJS(doc)
+
+Automerge.isAutomerge(plain) // false
+// plain is now a regular JavaScript object
+```
+
+## Memory Management
+
+Automerge uses WebAssembly under the hood. In environments that support `FinalizationRegistry`, memory is managed automatically. Otherwise, you can explicitly free memory:
+
+```typescript
+let doc = Automerge.init()
+// ... use the document ...
+
+// Explicitly free (only needed in older environments)
+Automerge.free(doc)
+```
+
+<Tip>
+Modern browsers and Node.js versions support automatic garbage collection for Automerge documents. Explicit `free()` calls are rarely needed.
+</Tip>
+
+## Next Steps
+
+- Learn how to modify documents in [Changes](/concepts/changes)
+- Understand [Merging](/concepts/merging) to combine documents
+- Handle concurrent edits with [Conflicts](/concepts/conflicts)

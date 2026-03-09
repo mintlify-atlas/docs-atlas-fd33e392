@@ -1,0 +1,576 @@
+---
+title: Marks
+description: Rich text formatting with marks in Automerge
+---
+
+## Overview
+
+Marks enable rich text formatting in Automerge by overlaying formatting spans on text sequences. Marks are named attributes that can have various values and are applied to ranges of text.
+
+---
+
+## mark
+
+Apply a mark to a range of text.
+
+```typescript
+function mark<T>(
+  doc: Doc<T>,
+  path: Prop[],
+  range: MarkRange,
+  name: string,
+  value: MarkValue
+): void
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document (must be within a change callback)
+</ParamField>
+
+<ParamField path="path" type="Prop[]" required>
+  The path to the string to mark
+</ParamField>
+
+<ParamField path="range" type="MarkRange" required>
+  The range to apply the mark to
+  
+  <Expandable title="MarkRange">
+    ```typescript
+    type MarkRange = {
+      start: number | Cursor
+      end: number | Cursor
+      expand?: "before" | "after" | "both" | "none"
+    }
+    ```
+    
+    <ParamField path="start" type="number | Cursor">
+      Start position of the mark
+    </ParamField>
+    <ParamField path="end" type="number | Cursor">
+      End position of the mark
+    </ParamField>
+    <ParamField path="expand" type="'before' | 'after' | 'both' | 'none'">
+      How the mark expands when text is inserted:
+      - `"before"`: Expands when text inserted before
+      - `"after"`: Expands when text inserted after
+      - `"both"`: Expands in both directions (default)
+      - `"none"`: Doesn't expand
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  The name of the mark (e.g., "bold", "italic", "link")
+</ParamField>
+
+<ParamField path="value" type="MarkValue" required>
+  The value of the mark
+  
+  ```typescript
+  type MarkValue = string | number | null | boolean | Date | Uint8Array
+  ```
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Bold Text
+let doc = Automerge.from({ content: "Hello World" })
+
+doc = Automerge.change(doc, d => {
+  // Make "Hello" bold
+  Automerge.mark(
+    d,
+    ["content"],
+    { start: 0, end: 5 },
+    "bold",
+    true
+  )
+})
+```
+
+```typescript Link Annotation
+let doc = Automerge.from({ text: "Visit the documentation" })
+
+doc = Automerge.change(doc, d => {
+  // Add link to "documentation"
+  Automerge.mark(
+    d,
+    ["text"],
+    { start: 10, end: 23 },
+    "link",
+    "https://automerge.org/docs"
+  )
+})
+```
+
+```typescript Multiple Marks
+doc = Automerge.change(doc, d => {
+  // Apply multiple marks to same range
+  Automerge.mark(d, ["text"], { start: 0, end: 5 }, "bold", true)
+  Automerge.mark(d, ["text"], { start: 0, end: 5 }, "italic", true)
+  Automerge.mark(d, ["text"], { start: 0, end: 5 }, "color", "red")
+})
+```
+
+```typescript Expand Behavior
+doc = Automerge.change(doc, d => {
+  // Mark that expands when typing at the end
+  Automerge.mark(
+    d,
+    ["text"],
+    { start: 0, end: 5, expand: "after" },
+    "bold",
+    true
+  )
+})
+
+// Now typing at position 5 will also be bold
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["text"], 5, 0, " there")
+})
+```
+
+```typescript Using Cursors
+const start = Automerge.getCursor(doc, ["text"], 0)
+const end = Automerge.getCursor(doc, ["text"], 5)
+
+doc = Automerge.change(doc, d => {
+  Automerge.mark(
+    d,
+    ["text"],
+    { start, end },
+    "highlight",
+    "yellow"
+  )
+})
+```
+
+</CodeGroup>
+
+---
+
+## unmark
+
+Remove a mark from a range of text.
+
+```typescript
+function unmark<T>(
+  doc: Doc<T>,
+  path: Prop[],
+  range: MarkRange,
+  name: string
+): void
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document (must be within a change callback)
+</ParamField>
+
+<ParamField path="path" type="Prop[]" required>
+  The path to the string
+</ParamField>
+
+<ParamField path="range" type="MarkRange" required>
+  The range to remove the mark from
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  The name of the mark to remove
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Remove Bold
+let doc = Automerge.from({ text: "Hello World" })
+
+// Apply bold
+doc = Automerge.change(doc, d => {
+  Automerge.mark(d, ["text"], { start: 0, end: 5 }, "bold", true)
+})
+
+// Remove bold
+doc = Automerge.change(doc, d => {
+  Automerge.unmark(d, ["text"], { start: 0, end: 5 }, "bold")
+})
+```
+
+```typescript Partial Unmark
+doc = Automerge.change(doc, d => {
+  // Bold entire text
+  Automerge.mark(d, ["text"], { start: 0, end: 11 }, "bold", true)
+})
+
+doc = Automerge.change(doc, d => {
+  // Remove bold from "World" only
+  Automerge.unmark(d, ["text"], { start: 6, end: 11 }, "bold")
+})
+// Now only "Hello " is bold
+```
+
+</CodeGroup>
+
+---
+
+## marks
+
+Get all marks in a document at a specific path.
+
+```typescript
+function marks<T>(doc: Doc<T>, path: Prop[]): Mark[]
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document
+</ParamField>
+
+<ParamField path="path" type="Prop[]" required>
+  The path to the text
+</ParamField>
+
+<ResponseField name="return" type="Mark[]">
+  Array of all marks on the text
+  
+  ```typescript
+  type Mark = {
+    name: string
+    value: MarkValue
+    start: number
+    end: number
+  }
+  ```
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Get All Marks
+let doc = Automerge.from({ text: "Hello World" })
+
+doc = Automerge.change(doc, d => {
+  Automerge.mark(d, ["text"], { start: 0, end: 5 }, "bold", true)
+  Automerge.mark(d, ["text"], { start: 6, end: 11 }, "italic", true)
+})
+
+const allMarks = Automerge.marks(doc, ["text"])
+console.log(allMarks)
+// [
+//   { name: "bold", value: true, start: 0, end: 5 },
+//   { name: "italic", value: true, start: 6, end: 11 }
+// ]
+```
+
+```typescript Filter Marks
+const marks = Automerge.marks(doc, ["text"])
+const linkMarks = marks.filter(m => m.name === "link")
+```
+
+</CodeGroup>
+
+---
+
+## marksAt
+
+Get marks active at a specific position.
+
+```typescript
+function marksAt<T>(
+  doc: Doc<T>,
+  path: Prop[],
+  index: number | Cursor
+): MarkSet | null
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document
+</ParamField>
+
+<ParamField path="path" type="Prop[]" required>
+  The path to the text
+</ParamField>
+
+<ParamField path="index" type="number | Cursor" required>
+  The position to query
+</ParamField>
+
+<ResponseField name="return" type="MarkSet | null">
+  Object mapping mark names to their values at this position, or null if no marks
+  
+  ```typescript
+  type MarkSet = {
+    [name: string]: MarkValue
+  }
+  ```
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Check Formatting
+let doc = Automerge.from({ text: "Hello World" })
+
+doc = Automerge.change(doc, d => {
+  Automerge.mark(d, ["text"], { start: 0, end: 5 }, "bold", true)
+  Automerge.mark(d, ["text"], { start: 0, end: 5 }, "italic", true)
+})
+
+const marksAt3 = Automerge.marksAt(doc, ["text"], 3)
+console.log(marksAt3)
+// { bold: true, italic: true }
+
+const marksAt8 = Automerge.marksAt(doc, ["text"], 8)
+console.log(marksAt8)
+// null (no marks at this position)
+```
+
+```typescript Editor Toolbar State
+function updateToolbar(doc: Doc, cursorPos: number) {
+  const marks = Automerge.marksAt(doc, ["content"], cursorPos)
+  
+  setBoldButton(marks?.bold === true)
+  setItalicButton(marks?.italic === true)
+  setLinkButton(marks?.link !== undefined)
+}
+```
+
+</CodeGroup>
+
+---
+
+## Common Mark Types
+
+### Text Formatting
+
+<CodeGroup>
+
+```typescript Typography
+doc = Automerge.change(doc, d => {
+  // Bold
+  Automerge.mark(d, ["text"], range, "bold", true)
+  
+  // Italic
+  Automerge.mark(d, ["text"], range, "italic", true)
+  
+  // Underline
+  Automerge.mark(d, ["text"], range, "underline", true)
+  
+  // Strikethrough
+  Automerge.mark(d, ["text"], range, "strikethrough", true)
+})
+```
+
+```typescript Colors
+doc = Automerge.change(doc, d => {
+  // Text color
+  Automerge.mark(d, ["text"], range, "color", "#ff0000")
+  
+  // Background color
+  Automerge.mark(d, ["text"], range, "backgroundColor", "yellow")
+})
+```
+
+```typescript Font Styles
+doc = Automerge.change(doc, d => {
+  // Font family
+  Automerge.mark(d, ["text"], range, "font", "monospace")
+  
+  // Font size
+  Automerge.mark(d, ["text"], range, "fontSize", 16)
+})
+```
+
+</CodeGroup>
+
+### Semantic Marks
+
+<CodeGroup>
+
+```typescript Links and References
+doc = Automerge.change(doc, d => {
+  // Hyperlink
+  Automerge.mark(
+    d,
+    ["text"],
+    range,
+    "link",
+    "https://example.com"
+  )
+  
+  // Reference to another document
+  Automerge.mark(d, ["text"], range, "ref", "doc-123")
+})
+```
+
+```typescript Comments and Annotations
+doc = Automerge.change(doc, d => {
+  // Comment
+  Automerge.mark(
+    d,
+    ["text"],
+    range,
+    "comment",
+    "This needs review"
+  )
+  
+  // Author attribution
+  Automerge.mark(d, ["text"], range, "author", "alice")
+  
+  // Timestamp
+  Automerge.mark(d, ["text"], range, "timestamp", new Date())
+})
+```
+
+</CodeGroup>
+
+---
+
+## Working with Spans
+
+Get formatted text as spans for rendering:
+
+```typescript
+const spans = Automerge.spans(doc, ["text"])
+
+spans.forEach(span => {
+  if (span.type === "text") {
+    console.log(`Text: "${span.value}"`)
+    console.log(`Marks:`, span.marks)
+  }
+})
+```
+
+### Rendering Example
+
+<CodeGroup>
+
+```typescript React Renderer
+import * as Automerge from '@automerge/automerge'
+
+function RichText({ doc, path }: { doc: Doc<any>, path: string[] }) {
+  const spans = Automerge.spans(doc, path)
+  
+  return (
+    <div>
+      {spans.map((span, i) => {
+        if (span.type === "text") {
+          const marks = span.marks || {}
+          const style: React.CSSProperties = {}
+          
+          if (marks.bold) style.fontWeight = "bold"
+          if (marks.italic) style.fontStyle = "italic"
+          if (marks.color) style.color = marks.color as string
+          if (marks.backgroundColor) {
+            style.backgroundColor = marks.backgroundColor as string
+          }
+          
+          if (marks.link) {
+            return (
+              <a key={i} href={marks.link as string} style={style}>
+                {span.value}
+              </a>
+            )
+          }
+          
+          return (
+            <span key={i} style={style}>
+              {span.value}
+            </span>
+          )
+        }
+        return null
+      })}
+    </div>
+  )
+}
+```
+
+```typescript HTML Renderer
+function renderToHTML(doc: Doc<any>, path: string[]): string {
+  const spans = Automerge.spans(doc, path)
+  
+  return spans.map(span => {
+    if (span.type === "text") {
+      let html = span.value
+      const marks = span.marks || {}
+      
+      if (marks.bold) html = `<strong>${html}</strong>`
+      if (marks.italic) html = `<em>${html}</em>`
+      if (marks.link) {
+        html = `<a href="${marks.link}">${html}</a>`
+      }
+      
+      return html
+    }
+    return ""
+  }).join("")
+}
+```
+
+</CodeGroup>
+
+---
+
+## Best Practices
+
+### 1. Use consistent mark names
+
+```typescript
+// Good: Consistent naming
+const MARKS = {
+  BOLD: "bold",
+  ITALIC: "italic",
+  LINK: "link"
+} as const
+
+Automerge.mark(d, path, range, MARKS.BOLD, true)
+```
+
+### 2. Set appropriate expand behavior
+
+```typescript
+// For formatting: typically "none" or "both"
+Automerge.mark(d, path, range, "bold", true)
+// Default "both" means typing at edges extends the mark
+
+// For annotations: typically "none"
+Automerge.mark(
+  d,
+  path,
+  { ...range, expand: "none" },
+  "comment",
+  "Review this"
+)
+// Won't expand when typing at edges
+```
+
+### 3. Clean up marks when text is deleted
+
+Marks are automatically adjusted when text is spliced, but consider explicitly unmarking when needed:
+
+```typescript
+doc = Automerge.change(doc, d => {
+  // Delete text
+  Automerge.splice(d, ["text"], 5, 10)
+  
+  // Marks are automatically adjusted
+})
+```
+
+### 4. Layer marks for complex formatting
+
+```typescript
+// Apply multiple marks to create rich formatting
+doc = Automerge.change(doc, d => {
+  const range = { start: 0, end: 5 }
+  
+  Automerge.mark(d, ["text"], range, "bold", true)
+  Automerge.mark(d, ["text"], range, "italic", true)
+  Automerge.mark(d, ["text"], range, "color", "blue")
+  Automerge.mark(d, ["text"], range, "link", "https://example.com")
+})
+```

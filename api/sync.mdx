@@ -1,0 +1,523 @@
+---
+title: Synchronization
+description: Syncing Automerge documents between peers
+---
+
+## Overview
+
+Automerge's sync protocol enables efficient synchronization between peers. The protocol is stateful, meaning each peer maintains a `SyncState` for every peer they communicate with.
+
+### Sync Workflow
+
+1. Initialize sync state with `initSyncState()`
+2. Generate sync messages with `generateSyncMessage()`
+3. Receive and process messages with `receiveSyncMessage()`
+4. Check sync status with `hasOurChanges()`
+
+---
+
+## initSyncState
+
+Create a new, blank sync state for a peer.
+
+```typescript
+function initSyncState(): SyncState
+```
+
+<ResponseField name="return" type="SyncState">
+  A new sync state object for tracking sync with a peer
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Basic Setup
+import * as Automerge from '@automerge/automerge'
+
+const doc = Automerge.from({ value: 0 })
+
+// Create sync state for a peer
+let syncState = Automerge.initSyncState()
+```
+
+```typescript Multiple Peers
+// Track sync state for multiple peers
+const peers = new Map<string, Automerge.SyncState>()
+
+function addPeer(peerId: string) {
+  peers.set(peerId, Automerge.initSyncState())
+}
+
+addPeer("peer-1")
+addPeer("peer-2")
+```
+
+</CodeGroup>
+
+---
+
+## generateSyncMessage
+
+Generate a sync message to send to a peer.
+
+```typescript
+function generateSyncMessage<T>(
+  doc: Doc<T>,
+  inState: SyncState
+): [SyncState, SyncMessage | null]
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document to generate a sync message for
+</ParamField>
+
+<ParamField path="inState" type="SyncState" required>
+  The current sync state for this peer
+</ParamField>
+
+<ResponseField name="return" type="[SyncState, SyncMessage | null]">
+  A tuple of:
+  - **newSyncState**: Updated sync state (replaces `inState`)
+  - **syncMessage**: Message to send to peer, or `null` if in sync
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Generate Message
+let doc = Automerge.from({ counter: 0 })
+let syncState = Automerge.initSyncState()
+
+// Generate initial sync message
+let message: Uint8Array | null
+;[syncState, message] = Automerge.generateSyncMessage(doc, syncState)
+
+if (message) {
+  // Send to peer
+  peer.send(message)
+}
+```
+
+```typescript Sync Loop
+let doc = Automerge.from({ data: [] })
+let syncState = Automerge.initSyncState()
+
+async function syncWithPeer(peer: Peer) {
+  let message: Uint8Array | null
+  
+  // Generate initial message
+  ;[syncState, message] = Automerge.generateSyncMessage(doc, syncState)
+  
+  while (message) {
+    // Send message to peer
+    await peer.send(message)
+    
+    // Wait for response
+    const response = await peer.receive()
+    
+    // Process response
+    ;[doc, syncState] = Automerge.receiveSyncMessage(
+      doc,
+      syncState,
+      response
+    )
+    
+    // Generate next message
+    ;[syncState, message] = Automerge.generateSyncMessage(doc, syncState)
+  }
+  
+  console.log('Sync complete')
+}
+```
+
+```typescript After Making Changes
+let syncState = Automerge.initSyncState()
+
+// Make a change
+doc = Automerge.change(doc, d => d.value++)
+
+// Generate sync message with the new changes
+let [newSyncState, message] = Automerge.generateSyncMessage(doc, syncState)
+
+if (message) {
+  broadcast(message)
+  syncState = newSyncState
+}
+```
+
+</CodeGroup>
+
+---
+
+## receiveSyncMessage
+
+Process a sync message received from a peer.
+
+```typescript
+function receiveSyncMessage<T>(
+  doc: Doc<T>,
+  inState: SyncState,
+  message: SyncMessage,
+  opts?: ApplyOptions<T>
+): [Doc<T>, SyncState, null]
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document to apply sync message to
+</ParamField>
+
+<ParamField path="inState" type="SyncState" required>
+  The current sync state for this peer
+</ParamField>
+
+<ParamField path="message" type="SyncMessage" required>
+  The sync message received from the peer
+</ParamField>
+
+<ParamField path="opts" type="ApplyOptions<T>">
+  <Expandable title="ApplyOptions<T>">
+    <ParamField path="patchCallback" type="PatchCallback<T>">
+      Callback to receive patches for any document changes
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="return" type="[Doc<T>, SyncState, null]">
+  A tuple of:
+  - **newDoc**: Updated document
+  - **newSyncState**: Updated sync state
+  - **null**: (legacy, always null - call `generateSyncMessage` after this)
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Receive Message
+let doc = Automerge.from({ items: [] })
+let syncState = Automerge.initSyncState()
+
+// Receive message from peer
+const message = await peer.receive()
+
+// Process the message
+;[doc, syncState] = Automerge.receiveSyncMessage(
+  doc,
+  syncState,
+  message
+)
+
+// Generate response
+let [newSyncState, response] = Automerge.generateSyncMessage(doc, syncState)
+if (response) {
+  peer.send(response)
+}
+```
+
+```typescript With Patch Callback
+const patchCallback = (patches, info) => {
+  patches.forEach(patch => {
+    console.log('Received change:', patch)
+  })
+  updateUI(info.after)
+}
+
+;[doc, syncState] = Automerge.receiveSyncMessage(
+  doc,
+  syncState,
+  message,
+  { patchCallback }
+)
+```
+
+```typescript Full Sync Handler
+class SyncManager {
+  doc: Automerge.Doc<any>
+  peers = new Map<string, Automerge.SyncState>()
+  
+  async handleMessage(peerId: string, message: Uint8Array) {
+    let syncState = this.peers.get(peerId) || Automerge.initSyncState()
+    
+    // Process incoming message
+    ;[this.doc, syncState] = Automerge.receiveSyncMessage(
+      this.doc,
+      syncState,
+      message
+    )
+    
+    // Update sync state
+    this.peers.set(peerId, syncState)
+    
+    // Generate response
+    let response: Uint8Array | null
+    ;[syncState, response] = Automerge.generateSyncMessage(this.doc, syncState)
+    
+    if (response) {
+      await this.send(peerId, response)
+      this.peers.set(peerId, syncState)
+    }
+  }
+  
+  async send(peerId: string, data: Uint8Array) {
+    // Send to peer over network
+  }
+}
+```
+
+</CodeGroup>
+
+<Note>
+  The third return value is always `null` and exists for legacy reasons. Always call `generateSyncMessage` after `receiveSyncMessage` to check if you need to send a response.
+</Note>
+
+---
+
+## hasOurChanges
+
+Check if a peer has all of our changes.
+
+```typescript
+function hasOurChanges<T>(doc: Doc<T>, remoteState: SyncState): boolean
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document to check
+</ParamField>
+
+<ParamField path="remoteState" type="SyncState" required>
+  The sync state representing the remote peer
+</ParamField>
+
+<ResponseField name="return" type="boolean">
+  `true` if the remote peer has all our changes, `false` otherwise
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Check Sync Status
+const syncState = Automerge.initSyncState()
+
+if (!Automerge.hasOurChanges(doc, syncState)) {
+  console.log('Peer needs updates')
+  
+  const [newState, message] = Automerge.generateSyncMessage(doc, syncState)
+  if (message) {
+    peer.send(message)
+  }
+} else {
+  console.log('Peer is up to date')
+}
+```
+
+```typescript Multiple Peers Status
+function checkPeerStatus(peers: Map<string, Automerge.SyncState>) {
+  const status = new Map<string, boolean>()
+  
+  peers.forEach((syncState, peerId) => {
+    const isUpToDate = Automerge.hasOurChanges(doc, syncState)
+    status.set(peerId, isUpToDate)
+  })
+  
+  return status
+}
+```
+
+</CodeGroup>
+
+---
+
+## encodeSyncState / decodeSyncState
+
+Serialize and deserialize sync state for storage or transmission.
+
+```typescript
+function encodeSyncState(state: SyncState): Uint8Array
+function decodeSyncState(data: Uint8Array): SyncState
+```
+
+### Examples
+
+<CodeGroup>
+
+```typescript Persist Sync State
+import * as fs from 'fs'
+
+let syncState = Automerge.initSyncState()
+
+// After syncing...
+// Save sync state
+const encoded = Automerge.encodeSyncState(syncState)
+fs.writeFileSync('peer-sync-state.dat', encoded)
+
+// Later, restore sync state
+const loaded = fs.readFileSync('peer-sync-state.dat')
+syncState = Automerge.decodeSyncState(loaded)
+```
+
+```typescript Network Transfer
+class NetworkSync {
+  async saveSyncState(peerId: string, state: Automerge.SyncState) {
+    const encoded = Automerge.encodeSyncState(state)
+    await database.put(`sync:${peerId}`, encoded)
+  }
+  
+  async loadSyncState(peerId: string): Promise<Automerge.SyncState> {
+    const encoded = await database.get(`sync:${peerId}`)
+    return encoded 
+      ? Automerge.decodeSyncState(encoded)
+      : Automerge.initSyncState()
+  }
+}
+```
+
+</CodeGroup>
+
+---
+
+## Complete Sync Example
+
+<CodeGroup>
+
+```typescript WebSocket Sync
+import * as Automerge from '@automerge/automerge'
+import WebSocket from 'ws'
+
+class AutomergeSync {
+  doc: Automerge.Doc<any>
+  syncStates = new Map<WebSocket, Automerge.SyncState>()
+  
+  constructor(initialDoc: Automerge.Doc<any>) {
+    this.doc = initialDoc
+  }
+  
+  handleConnection(ws: WebSocket) {
+    // Initialize sync state for new peer
+    const syncState = Automerge.initSyncState()
+    this.syncStates.set(ws, syncState)
+    
+    // Send initial sync message
+    this.sendSyncMessage(ws)
+    
+    // Handle incoming messages
+    ws.on('message', (data: Uint8Array) => {
+      this.handleSyncMessage(ws, data)
+    })
+    
+    ws.on('close', () => {
+      this.syncStates.delete(ws)
+    })
+  }
+  
+  handleSyncMessage(ws: WebSocket, message: Uint8Array) {
+    let syncState = this.syncStates.get(ws)!
+    
+    // Receive and apply changes
+    ;[this.doc, syncState] = Automerge.receiveSyncMessage(
+      this.doc,
+      syncState,
+      message
+    )
+    
+    this.syncStates.set(ws, syncState)
+    
+    // Send response if needed
+    this.sendSyncMessage(ws)
+    
+    // Notify other peers
+    this.broadcastToOthers(ws)
+  }
+  
+  sendSyncMessage(ws: WebSocket) {
+    let syncState = this.syncStates.get(ws)!
+    let message: Uint8Array | null
+    
+    ;[syncState, message] = Automerge.generateSyncMessage(
+      this.doc,
+      syncState
+    )
+    
+    this.syncStates.set(ws, syncState)
+    
+    if (message) {
+      ws.send(message)
+    }
+  }
+  
+  broadcastToOthers(exclude: WebSocket) {
+    this.syncStates.forEach((_, ws) => {
+      if (ws !== exclude && ws.readyState === WebSocket.OPEN) {
+        this.sendSyncMessage(ws)
+      }
+    })
+  }
+  
+  makeChange(changeFn: (doc: any) => void) {
+    this.doc = Automerge.change(this.doc, changeFn)
+    
+    // Notify all peers
+    this.syncStates.forEach((_, ws) => {
+      this.sendSyncMessage(ws)
+    })
+  }
+}
+
+// Usage
+const doc = Automerge.from({ items: [] })
+const sync = new AutomergeSync(doc)
+
+const server = new WebSocket.Server({ port: 8080 })
+server.on('connection', ws => sync.handleConnection(ws))
+
+// Make changes
+sync.makeChange(d => d.items.push('new item'))
+```
+
+```typescript Simple Peer Sync
+function setupSync(
+  doc: Automerge.Doc<any>,
+  send: (data: Uint8Array) => void,
+  onUpdate: (doc: Automerge.Doc<any>) => void
+) {
+  let syncState = Automerge.initSyncState()
+  
+  // Send initial sync message
+  let message: Uint8Array | null
+  ;[syncState, message] = Automerge.generateSyncMessage(doc, syncState)
+  if (message) send(message)
+  
+  return {
+    // Handle received messages
+    receive: (message: Uint8Array) => {
+      ;[doc, syncState] = Automerge.receiveSyncMessage(
+        doc,
+        syncState,
+        message
+      )
+      
+      onUpdate(doc)
+      
+      // Send response
+      let response: Uint8Array | null
+      ;[syncState, response] = Automerge.generateSyncMessage(doc, syncState)
+      if (response) send(response)
+    },
+    
+    // Notify after local changes
+    notifyChange: (newDoc: Automerge.Doc<any>) => {
+      doc = newDoc
+      let message: Uint8Array | null
+      ;[syncState, message] = Automerge.generateSyncMessage(doc, syncState)
+      if (message) send(message)
+    },
+    
+    // Check if peer is up to date
+    isInSync: () => Automerge.hasOurChanges(doc, syncState)
+  }
+}
+```
+
+</CodeGroup>

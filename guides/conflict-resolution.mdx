@@ -1,0 +1,398 @@
+---
+title: Conflict Resolution
+description: Learn how Automerge handles and resolves conflicts in collaborative editing
+---
+
+Automerge is a **Conflict-free Replicated Data Type** (CRDT), which means it automatically resolves conflicts when multiple users edit the same data concurrently. This guide explains how conflicts work and how to handle them.
+
+## How Automerge handles conflicts
+
+Automerge automatically resolves most conflicts:
+
+- **Arrays**: Concurrent insertions are preserved; order is deterministic
+- **Text**: Concurrent edits are merged using list CRDT semantics
+- **Objects**: Concurrent updates to the same key create a conflict
+
+<Note>
+Conflicts only occur when multiple peers **concurrently assign different values to the same object key**. Most operations (array insertions, text edits, adding new keys) don't conflict.
+</Note>
+
+## When conflicts occur
+
+Conflicts happen when two peers modify the same property before seeing each other's changes:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type Profile = { name: string }
+
+// Both start with the same document
+let doc1 = Automerge.from<Profile>({ name: "Alice" })
+let doc2 = Automerge.clone(doc1)
+
+// Concurrent updates to the same field
+doc1 = Automerge.change(doc1, d => {
+  d.name = "Alice Smith"  // User 1's change
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.name = "Alice Johnson"  // User 2's change
+})
+
+// Merge the documents
+const merged = Automerge.merge(doc1, doc2)
+
+console.log(merged.name) // Either "Alice Smith" or "Alice Johnson"
+```
+
+Automerge picks one value to show, but **both values are preserved** in the document.
+
+## Viewing conflicts
+
+Use `getConflicts()` to see all conflicting values:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type Pet = { name: string }
+type Profile = { pets: Pet[] }
+
+let doc1 = Automerge.from<Profile>({ 
+  pets: [{ name: "Lassie" }] 
+})
+
+let doc2 = Automerge.clone(doc1)
+
+// Concurrent updates to pet name
+doc1 = Automerge.change(doc1, d => {
+  d.pets[0].name = "Beethoven"
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.pets[0].name = "Babe"
+})
+
+// Merge
+const merged = Automerge.merge(doc1, doc2)
+
+console.log(merged.pets[0].name) // "Babe" or "Beethoven"
+
+// View conflicts
+const conflicts = Automerge.getConflicts(merged.pets[0], "name")
+
+if (conflicts) {
+  console.log("Conflicting values:", Object.values(conflicts))
+  // ["Babe", "Beethoven"]
+}
+```
+
+<Note>
+Pass the **parent object** (not the document root) as the first argument to `getConflicts()`. The second argument is the property name.
+</Note>
+
+## Understanding the conflicts object
+
+The conflicts object maps operation IDs to values:
+
+```typescript
+const conflicts = Automerge.getConflicts(merged.pets[0], "name")
+
+console.log(conflicts)
+// {
+//   "3@actor1": "Beethoven",
+//   "3@actor2": "Babe"
+// }
+```
+
+The keys are **operation IDs** in the format `sequenceNumber@actorId`. These are unique identifiers for each change.
+
+## Deterministic conflict resolution
+
+When there's a conflict, Automerge picks a winner deterministically:
+
+1. The value with the **lexicographically greatest operation ID** wins
+2. All peers with the same changes will pick the same winner
+3. The choice is arbitrary but consistent
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// Create two documents with specific actor IDs
+let doc1 = Automerge.init<{ x: number }>("aaaa")
+let doc2 = Automerge.init<{ x: number }>("bbbb")
+
+doc1 = Automerge.change(doc1, d => { d.x = 1 })
+doc2 = Automerge.change(doc2, d => { d.x = 2 })
+
+const merged1 = Automerge.merge(doc1, doc2)
+const merged2 = Automerge.merge(doc2, doc1)
+
+// Both peers see the same value
+console.log(merged1.x === merged2.x) // true
+
+// The winner is determined by actor ID
+console.log(merged1.x) // 2 (from "bbbb" actor)
+```
+
+## Resolving conflicts manually
+
+If you want to resolve conflicts differently, you can:
+
+### 1. Check for conflicts and choose
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+function resolveNameConflict(doc: Automerge.Doc<any>) {
+  const conflicts = Automerge.getConflicts(doc, "name")
+  
+  if (conflicts) {
+    const values = Object.values(conflicts)
+    
+    // Custom resolution: choose the longest name
+    const longest = values.reduce((a, b) => 
+      a.length > b.length ? a : b
+    )
+    
+    return Automerge.change(doc, d => {
+      d.name = longest
+    })
+  }
+  
+  return doc
+}
+```
+
+### 2. Present conflicts to the user
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+function showConflictDialog(doc: Automerge.Doc<any>, path: string[]) {
+  const parent = path.slice(0, -1).reduce((obj, key) => obj[key], doc)
+  const key = path[path.length - 1]
+  
+  const conflicts = Automerge.getConflicts(parent, key)
+  
+  if (conflicts) {
+    const options = Object.values(conflicts)
+    
+    // Show UI to user
+    const choice = await showDialog({
+      title: "Conflict detected",
+      message: `Multiple values for ${key}`,
+      options
+    })
+    
+    // Apply user's choice
+    return Automerge.change(doc, d => {
+      const p = path.slice(0, -1).reduce((obj, k) => obj[k], d)
+      p[key] = choice
+    })
+  }
+  
+  return doc
+}
+```
+
+### 3. Merge conflicts programmatically
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type TodoDoc = {
+  todos: Array<{ text: string, done: boolean }>
+}
+
+function mergeArrayConflicts(doc: Automerge.Doc<TodoDoc>) {
+  // If two peers both added todos, merge them
+  const conflicts = Automerge.getConflicts(doc, "todos")
+  
+  if (conflicts) {
+    const arrays = Object.values(conflicts) as Array<any[]>
+    
+    // Combine all unique items
+    const merged = [...new Set(
+      arrays.flat().map(item => JSON.stringify(item))
+    )].map(s => JSON.parse(s))
+    
+    return Automerge.change(doc, d => {
+      d.todos = merged
+    })
+  }
+  
+  return doc
+}
+```
+
+## Conflicts in nested objects
+
+Conflicts can occur at any level of nesting:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type Doc = {
+  user: {
+    profile: {
+      displayName: string
+    }
+  }
+}
+
+let doc1 = Automerge.from<Doc>({
+  user: {
+    profile: { displayName: "Alice" }
+  }
+})
+
+let doc2 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => {
+  d.user.profile.displayName = "Alice A."
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.user.profile.displayName = "A. Smith"
+})
+
+const merged = Automerge.merge(doc1, doc2)
+
+// Check for conflict at the nested level
+const conflicts = Automerge.getConflicts(
+  merged.user.profile,
+  "displayName"
+)
+
+if (conflicts) {
+  console.log("Display name conflict:", Object.values(conflicts))
+}
+```
+
+## No conflicts in arrays
+
+Array operations don't create conflicts:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type TodoDoc = { todos: string[] }
+
+let doc1 = Automerge.from<TodoDoc>({ todos: [] })
+let doc2 = Automerge.clone(doc1)
+
+// Concurrent insertions
+doc1 = Automerge.change(doc1, d => {
+  d.todos.push("Task from user 1")
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.todos.push("Task from user 2")
+})
+
+// Merge preserves both
+const merged = Automerge.merge(doc1, doc2)
+
+console.log(merged.todos)
+// ["Task from user 1", "Task from user 2"]
+// or
+// ["Task from user 2", "Task from user 1"]
+
+// No conflicts!
+const conflicts = Automerge.getConflicts(merged, "todos")
+console.log(conflicts) // undefined
+```
+
+## Conflict detection in patches
+
+When conflicts occur, you can detect them via patch callbacks:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.from({ x: 1 })
+let doc2 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => { d.x = 2 })
+doc2 = Automerge.change(doc2, d => { d.x = 3 })
+
+const patchCallback = (patches: Automerge.Patch[], info) => {
+  patches.forEach(patch => {
+    if (patch.action === "conflict") {
+      console.log("Conflict detected at:", patch.path)
+    }
+  })
+}
+
+const merged = Automerge.merge(
+  Automerge.clone(doc1, { patchCallback }),
+  doc2
+)
+```
+
+## Best practices
+
+<Tip>
+**Avoid concurrent updates to the same key**: Design your data model so that different users typically edit different parts of the document.
+</Tip>
+
+<Tip>
+**Use arrays when possible**: Arrays handle concurrent insertions without conflicts.
+</Tip>
+
+<Tip>
+**Check for conflicts in critical fields**: Use `getConflicts()` for important properties where you need custom resolution logic.
+</Tip>
+
+<Warning>
+**Don't rely on conflict order**: The "winning" value is arbitrary. Always check for conflicts if you need to handle them specifically.
+</Warning>
+
+## Common patterns
+
+### Last-write-wins per user
+
+```typescript
+type Doc = {
+  settings: {
+    [userId: string]: any
+  }
+}
+
+// Each user only modifies their own settings
+doc = Automerge.change(doc, d => {
+  d.settings[currentUserId] = { theme: "dark" }
+})
+
+// No conflicts because different keys!
+```
+
+### Append-only logs
+
+```typescript
+type Doc = {
+  events: Array<{ timestamp: number, data: any }>
+}
+
+// Both users append
+doc1 = Automerge.change(doc1, d => {
+  d.events.push({ timestamp: Date.now(), data: "event1" })
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.events.push({ timestamp: Date.now(), data: "event2" })
+})
+
+// Both events are preserved after merge
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Making Changes" icon="pen" href="/guides/making-changes">
+    Learn more about modifying documents
+  </Card>
+  <Card title="Syncing Documents" icon="arrows-rotate" href="/guides/syncing-documents">
+    Keep documents in sync across peers
+  </Card>
+</CardGroup>

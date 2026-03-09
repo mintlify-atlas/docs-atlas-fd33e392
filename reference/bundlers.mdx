@@ -1,0 +1,294 @@
+---
+title: Bundler Configuration
+description: Configure webpack, Vite, and other bundlers to work with Automerge
+---
+
+Automerge uses WebAssembly under the hood, which requires specific bundler configuration. This guide covers setup for popular bundlers.
+
+## Why Bundler Configuration is Needed
+
+`@automerge/automerge` is a wrapper around a core library written in Rust and compiled to WebAssembly (`@automerge/automerge-wasm`). Since browsers don't currently support WebAssembly modules taking part in ESM module imports, you must configure your bundler properly.
+
+<Note>
+If you're writing a Node.js application, you can skip bundler configuration and use Automerge directly.
+</Note>
+
+## Webpack 5
+
+Webpack 5 has built-in WebAssembly support through experimental features.
+
+### Basic Configuration
+
+Add the `asyncWebAssembly` experiment to your `webpack.config.js`:
+
+```javascript webpack.config.js
+const path = require("path")
+
+module.exports = {
+  // ... other config
+  experiments: {
+    asyncWebAssembly: true,
+  },
+  performance: {
+    // Prevent warnings about WASM file size
+    hints: false,
+    maxEntrypointSize: 512000,
+    maxAssetSize: 512000,
+  },
+}
+```
+
+### Multiple Targets (Node + Web)
+
+If you're bundling for both Node.js and browser targets:
+
+```javascript webpack.config.js
+const path = require("path")
+const nodeExternals = require("webpack-node-externals")
+
+const serverConfig = {
+  target: "node",
+  externals: [nodeExternals()],
+  externalsPresets: { node: true },
+  entry: "./src/index.js",
+  output: {
+    filename: "node.js",
+    path: path.resolve(__dirname, "dist"),
+  },
+  mode: "development",
+}
+
+const clientConfig = {
+  experiments: { asyncWebAssembly: true },
+  target: "web",
+  entry: "./src/index.js",
+  output: {
+    filename: "main.js",
+    path: path.resolve(__dirname, "public"),
+  },
+  mode: "development",
+  performance: {
+    hints: false,
+    maxEntrypointSize: 512000,
+    maxAssetSize: 512000,
+  },
+}
+
+module.exports = [serverConfig, clientConfig]
+```
+
+### ESM Output
+
+For ES module output format:
+
+```javascript webpack.config.js
+import path from "path"
+import HtmlWebpackPlugin from "html-webpack-plugin"
+
+export default {
+  mode: 'development',
+  entry: {
+    index: './index.js',
+  },
+  plugins: [
+    new HtmlWebpackPlugin({
+      title: 'Automerge App',
+    }),
+  ],
+  output: {
+    filename: '[name].bundle.js',
+    path: path.resolve('./dist'),
+  },
+  experiments: {
+    asyncWebAssembly: true,
+  },
+}
+```
+
+## Vite
+
+Vite requires plugins to handle WebAssembly and top-level await.
+
+### Installation
+
+```bash
+npm install --save-dev vite-plugin-wasm vite-plugin-top-level-await
+# or
+yarn add -D vite-plugin-wasm vite-plugin-top-level-await
+```
+
+### Configuration
+
+```javascript vite.config.js
+import { defineConfig } from "vite"
+import wasm from "vite-plugin-wasm"
+import topLevelAwait from "vite-plugin-top-level-await"
+
+export default defineConfig({
+  plugins: [topLevelAwait(), wasm()],
+
+  // Only necessary if using SharedWorker or WebWorker
+  worker: {
+    format: "es",
+    plugins: [topLevelAwait(), wasm()],
+  },
+
+  optimizeDeps: {
+    // Prevent duplicate JS wrapper instances
+    // This is critical - without it you'll get horrible breakage
+    exclude: ["@automerge/automerge-wasm"],
+  },
+})
+```
+
+<Warning>
+The `optimizeDeps.exclude` setting is critical. Without it, `vite dev` includes two separate versions of the JS wrapper, causing crashes due to duplicate module-level heap allocation tracking.
+</Warning>
+
+### TypeScript Configuration
+
+If using TypeScript with Vite:
+
+```typescript vite.config.ts
+import { defineConfig } from "vite"
+import wasm from "vite-plugin-wasm"
+import topLevelAwait from "vite-plugin-top-level-await"
+
+export default defineConfig({
+  plugins: [wasm(), topLevelAwait()],
+})
+```
+
+## Create React App
+
+Create React App requires additional configuration via CRACO.
+
+### Installation
+
+```bash
+npm install @craco/craco craco-wasm
+```
+
+### Configuration
+
+Create `craco.config.js` in your project root:
+
+```javascript craco.config.js
+const cracoWasm = require("craco-wasm")
+
+module.exports = {
+  plugins: [cracoWasm()],
+}
+```
+
+### Update package.json
+
+Replace `react-scripts` with `craco` in your scripts:
+
+```json package.json
+{
+  "scripts": {
+    "start": "craco start",
+    "build": "craco build",
+    "test": "craco test"
+  }
+}
+```
+
+## Troubleshooting
+
+### "WebAssembly module is included in initial chunk"
+
+This warning appears in webpack when WASM files are bundled incorrectly.
+
+**Solution:** Add the `asyncWebAssembly` experiment and adjust performance hints:
+
+```javascript
+module.exports = {
+  experiments: { asyncWebAssembly: true },
+  performance: {
+    hints: false,
+    maxEntrypointSize: 512000,
+    maxAssetSize: 512000,
+  },
+}
+```
+
+### "Module not found: @automerge/automerge-wasm"
+
+This usually indicates missing dependencies.
+
+**Solution:** Ensure both packages are installed:
+
+```bash
+npm install @automerge/automerge @automerge/automerge-wasm
+```
+
+### Vite: "Cannot read property of undefined" errors
+
+This often happens when multiple instances of the WASM wrapper are loaded.
+
+**Solution:** Exclude the WASM package from optimization:
+
+```javascript
+export default defineConfig({
+  optimizeDeps: {
+    exclude: ["@automerge/automerge-wasm"],
+  },
+})
+```
+
+### Development vs Production Builds
+
+Some issues only appear in production builds due to code splitting and optimization.
+
+**Solution:** Test your production build locally:
+
+```bash
+# Webpack
+npm run build && npx serve dist
+
+# Vite
+npm run build && npm run preview
+```
+
+### MIME Type Errors
+
+If you see "Failed to load module script: Expected a JavaScript module script but the server responded with a MIME type of application/wasm":
+
+**Solution:** Ensure your server is configured to serve WASM files with the correct MIME type. For local development, most bundlers handle this automatically.
+
+## Other Bundlers
+
+### Rollup
+
+For Rollup, use the Vite plugins (which are Rollup-compatible):
+
+```javascript rollup.config.js
+import wasm from "vite-plugin-wasm"
+import topLevelAwait from "vite-plugin-top-level-await"
+
+export default {
+  plugins: [wasm(), topLevelAwait()],
+  // ... other config
+}
+```
+
+### Parcel
+
+Parcel 2 has built-in WebAssembly support and should work without additional configuration:
+
+```bash
+npm install --save @automerge/automerge
+# Then just import and use
+```
+
+### esbuild
+
+For esbuild, you may need to handle WASM files as external assets or use a plugin. The ecosystem is still evolving - check the Automerge examples directory for the latest guidance.
+
+## Next Steps
+
+- [Quick Start](/quickstart) - Start building with Automerge
+- [API Reference](/api-reference) - Explore the full API
+- [Binary Format](/reference/binary-format) - Learn about Automerge's storage format

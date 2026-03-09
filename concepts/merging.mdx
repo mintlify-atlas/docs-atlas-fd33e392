@@ -1,0 +1,393 @@
+---
+title: 'Merging'
+description: 'Understanding merge operations and automatic conflict resolution'
+---
+
+# Merging in Automerge
+
+Merging is the process of combining changes from different document instances. Automerge's CRDT algorithms ensure that merges are automatic, deterministic, and produce consistent results across all peers.
+
+## Basic Merging
+
+Use `merge()` to combine two documents:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.from({
+  tasks: [
+    { description: "feed fish", done: false },
+    { description: "water plants", done: false }
+  ]
+})
+
+// Create a second thread of execution
+let doc2 = Automerge.clone(doc1)
+
+// Make concurrent changes
+doc2 = Automerge.change(doc2, d => {
+  d.tasks[0].done = true
+})
+
+doc1 = Automerge.change(doc1, d => {
+  d.tasks.push({ description: "water fish", done: false })
+})
+
+// Merge changes from both docs
+doc1 = Automerge.merge(doc1, doc2)
+doc2 = Automerge.merge(doc2, doc1)
+
+// Both docs are now identical
+console.log(doc1)
+// {
+//   tasks: [
+//     { description: "feed fish", done: true },
+//     { description: "water plants", done: false },
+//     { description: "water fish", done: false }
+//   ]
+// }
+```
+
+<Note>
+After merging, both documents are **frozen** and cannot be modified. You must clone them if you want to make further changes.
+</Note>
+
+## Cloning for Continued Editing
+
+Since `merge()` freezes both input documents, clone before further edits:
+
+```typescript
+let doc1 = Automerge.from({ value: 1 })
+let doc2 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => d.value = 2)
+doc2 = Automerge.change(doc2, d => d.value = 3)
+
+// Merge
+doc1 = Automerge.merge(doc1, doc2)
+
+// This would fail: "Attempting to change an out of date document"
+// doc1 = Automerge.change(doc1, d => d.value = 4)
+
+// Correct: clone first
+doc1 = Automerge.clone(doc1)
+doc1 = Automerge.change(doc1, d => d.value = 4)
+```
+
+<Tip>
+A common pattern is to clone the argument before merging:
+
+```typescript
+doc1 = Automerge.merge(doc1, Automerge.clone(doc2))
+// Now doc2 can still be modified
+```
+</Tip>
+
+## How Merging Works
+
+Automerge merging operates on the change history of documents, not just the current state. When you merge, Automerge:
+
+1. **Identifies missing changes**: Determines which changes are in one document but not the other
+2. **Applies changes**: Integrates the missing changes into the document
+3. **Resolves conflicts**: Uses CRDT algorithms to deterministically handle concurrent edits
+4. **Updates state**: Returns a new document with combined state
+
+### Automatic Conflict Resolution
+
+Most changes merge automatically without conflicts:
+
+```typescript
+let doc1 = Automerge.from({
+  user: { name: "Alice", age: 30 },
+  settings: { theme: "light" }
+})
+
+let doc2 = Automerge.clone(doc1)
+
+// Different properties - no conflict
+doc1 = Automerge.change(doc1, d => {
+  d.user.age = 31
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.settings.theme = "dark"
+})
+
+let merged = Automerge.merge(doc1, doc2)
+
+console.log(merged)
+// {
+//   user: { name: "Alice", age: 31 },
+//   settings: { theme: "dark" }
+// }
+```
+
+### List Merging
+
+List operations merge intelligently:
+
+```typescript
+let doc1 = Automerge.from({ items: ["a", "b", "c"] })
+let doc2 = Automerge.clone(doc1)
+
+// Insert at different positions
+doc1 = Automerge.change(doc1, d => {
+  d.items.splice(1, 0, "x") // Insert "x" at index 1
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.items.push("y") // Append "y"
+})
+
+let merged = Automerge.merge(doc1, doc2)
+
+console.log(merged.items) // ["a", "x", "b", "c", "y"]
+```
+
+### Text Merging
+
+Text CRDTs handle concurrent character insertions:
+
+```typescript
+type DocType = { text: Automerge.Text }
+
+let doc1 = Automerge.from<DocType>({
+  text: new Automerge.Text("Hello world")
+})
+
+let doc2 = Automerge.clone(doc1)
+
+// Both insert text concurrently
+doc1 = Automerge.change(doc1, d => {
+  d.text.insertAt(5, " beautiful")
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.text.insertAt(11, "!")
+})
+
+let merged = Automerge.merge(doc1, doc2)
+
+console.log(merged.text.toString()) // "Hello beautiful world!"
+```
+
+## Property Conflicts
+
+When two actors assign different values to the same property concurrently, Automerge must choose one:
+
+```typescript
+let doc1 = Automerge.init<any>("actor1")
+doc1 = Automerge.change(doc1, d => {
+  d.user = { name: "Alice" }
+})
+
+let doc2 = Automerge.init<any>("actor2")
+doc2 = Automerge.merge(doc2, Automerge.clone(doc1))
+
+// Concurrent assignment to same property
+doc1 = Automerge.change(doc1, d => {
+  d.user.name = "Alice Smith"
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.user.name = "Alice Jones"
+})
+
+let merged = Automerge.merge(doc1, doc2)
+
+// Automerge deterministically picks one value
+console.log(merged.user.name) // Either "Alice Smith" or "Alice Jones"
+
+// But both values are available via getConflicts()
+const conflicts = Automerge.getConflicts(merged.user, "name")
+console.log(conflicts)
+// {
+//   "2@actor1": "Alice Smith",
+//   "2@actor2": "Alice Jones"
+// }
+```
+
+<Warning>
+The value Automerge displays is chosen deterministically but arbitrarily. All peers with the same changes will see the same value, but you may want to present conflicts to users. See [Conflicts](/concepts/conflicts) for details.
+</Warning>
+
+## Commutative Merging
+
+Merge order doesn't matter - results are always the same:
+
+```typescript
+let doc1 = Automerge.from({ x: 1 })
+let doc2 = Automerge.from({ y: 2 })
+let doc3 = Automerge.from({ z: 3 })
+
+// Different merge orders produce identical results
+let resultA = Automerge.merge(
+  Automerge.merge(doc1, doc2),
+  doc3
+)
+
+let resultB = Automerge.merge(
+  doc1,
+  Automerge.merge(doc2, doc3)
+)
+
+// resultA and resultB are identical
+assert.deepEqual(resultA, resultB)
+```
+
+## Counter Merging
+
+Counters merge by combining increments and decrements:
+
+```typescript
+let doc1 = Automerge.from({ 
+  likes: new Automerge.Counter(10) 
+})
+
+let doc2 = Automerge.clone(doc1)
+
+// Concurrent increments
+doc1 = Automerge.change(doc1, d => {
+  d.likes.increment(5)
+})
+
+doc2 = Automerge.change(doc2, d => {
+  d.likes.increment(3)
+})
+
+let merged = Automerge.merge(doc1, doc2)
+
+console.log(merged.likes.value) // 18 (10 + 5 + 3)
+```
+
+<Tip>
+Counters are perfect for like counts, vote tallies, or any metric that multiple users might increment concurrently.
+</Tip>
+
+## Merging with Patch Callbacks
+
+Get notified of changes during merge:
+
+```typescript
+let doc1 = Automerge.from({ value: 1 })
+let doc2 = Automerge.clone(doc1)
+
+doc2 = Automerge.change(doc2, d => {
+  d.value = 2
+  d.newKey = "added"
+})
+
+const patches: any[] = []
+
+doc1 = Automerge.merge(doc1, doc2)
+// Note: merge itself doesn't take a callback, but you can use
+// applyChanges for more control
+```
+
+## Checking for Divergence
+
+Compare document heads to see if they've diverged:
+
+```typescript
+let doc1 = Automerge.from({ value: 1 })
+let doc2 = Automerge.clone(doc1)
+
+// Same heads - documents are identical
+let heads1 = Automerge.getHeads(doc1)
+let heads2 = Automerge.getHeads(doc2)
+console.log(JSON.stringify(heads1) === JSON.stringify(heads2)) // true
+
+// Make a change
+doc1 = Automerge.change(doc1, d => d.value = 2)
+
+// Different heads - documents have diverged
+heads1 = Automerge.getHeads(doc1)
+heads2 = Automerge.getHeads(doc2)
+console.log(JSON.stringify(heads1) === JSON.stringify(heads2)) // false
+```
+
+## Getting Missing Changes
+
+Find what changes one document has that another doesn't:
+
+```typescript
+let doc1 = Automerge.from({ value: 1 })
+let doc2 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => d.value = 2)
+doc1 = Automerge.change(doc1, d => d.value = 3)
+
+// Get changes that doc1 has but doc2 doesn't
+const changes = Automerge.getChanges(doc2, doc1)
+
+// Apply them to doc2
+;[doc2] = Automerge.applyChanges(doc2, changes)
+
+console.log(doc2.value) // 3
+```
+
+## Merge vs ApplyChanges
+
+Two ways to incorporate changes:
+
+### merge()
+Merges two complete documents:
+
+```typescript
+doc1 = Automerge.merge(doc1, doc2)
+```
+
+### applyChanges()
+Applies specific changes:
+
+```typescript
+const changes = Automerge.getChanges(oldDoc, newDoc)
+;[doc] = Automerge.applyChanges(doc, changes)
+```
+
+<Note>
+Use `merge()` when you have two full documents. Use `applyChanges()` when you're receiving individual changes over a network or from storage.
+</Note>
+
+## Best Practices
+
+### 1. Clone Before Continued Editing
+
+```typescript
+// Always clone if you need to keep editing
+const merged = Automerge.merge(doc1, doc2)
+const editable = Automerge.clone(merged)
+```
+
+### 2. Merge Bidirectionally for Synchronization
+
+```typescript
+// Both peers should merge both ways
+doc1 = Automerge.merge(doc1, doc2)
+doc2 = Automerge.merge(doc2, doc1)
+```
+
+### 3. Check Equality After Merge
+
+```typescript
+const heads1 = Automerge.getHeads(doc1)
+const heads2 = Automerge.getHeads(doc2)
+const inSync = JSON.stringify(heads1) === JSON.stringify(heads2)
+```
+
+### 4. Handle Conflicts Explicitly When Needed
+
+```typescript
+const merged = Automerge.merge(doc1, doc2)
+const conflicts = Automerge.getConflicts(merged, "propertyName")
+
+if (conflicts) {
+  // Present conflicts to user or apply custom resolution
+}
+```
+
+## Next Steps
+
+- Learn about [Conflicts](/concepts/conflicts) to handle concurrent property assignments
+- Explore [Sync](/concepts/sync) for efficient network synchronization
+- Understand [Changes](/concepts/changes) to see what gets merged

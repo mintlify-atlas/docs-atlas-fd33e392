@@ -1,0 +1,443 @@
+---
+title: 'Building a Collaborative Todo List'
+description: 'Create a complete collaborative todo list application with Automerge'
+icon: 'list-check'
+---
+
+# Building a Collaborative Todo List
+
+This guide walks through building a complete collaborative todo list application using Automerge. Multiple users can add, complete, and delete tasks, with all changes automatically merged.
+
+## What You'll Build
+
+A todo list application that:
+- Supports multiple concurrent users
+- Automatically merges changes from different users
+- Handles conflicts deterministically
+- Persists data across sessions
+- Syncs in real-time
+
+## Document Structure
+
+First, let's define our document structure:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type TodoItem = {
+  id: string
+  text: string
+  completed: boolean
+  createdAt: Date
+  createdBy: string
+}
+
+type TodoDoc = {
+  todos: TodoItem[]
+  title: string
+}
+```
+
+<Note>
+Automerge documents are typed using TypeScript for better developer experience and type safety.
+</Note>
+
+## Implementation
+
+<Steps>
+  <Step title="Initialize the Document">
+    Create a new Automerge document with an initial structure:
+
+    ```typescript
+    // Create a new document with a custom actor ID
+    let doc = Automerge.init<TodoDoc>("user-alice")
+
+    // Initialize with a title and empty todos array
+    doc = Automerge.change(doc, "Initialize todo list", d => {
+      d.title = "My Tasks"
+      d.todos = []
+    })
+
+    console.log(doc)
+    // Output: { title: "My Tasks", todos: [] }
+    ```
+
+    <Tip>
+    The second parameter to `change()` is an optional message that documents what changed. This is helpful for debugging and understanding document history.
+    </Tip>
+  </Step>
+
+  <Step title="Add Todo Items">
+    Implement the function to add new todos:
+
+    ```typescript
+    function addTodo(
+      doc: Automerge.Doc<TodoDoc>,
+      text: string,
+      actorId: string
+    ): Automerge.Doc<TodoDoc> {
+      return Automerge.change(doc, `Add todo: ${text}`, d => {
+        d.todos.push({
+          id: `${actorId}-${Date.now()}`,
+          text: text,
+          completed: false,
+          createdAt: new Date(),
+          createdBy: actorId
+        })
+      })
+    }
+
+    // Usage
+    doc = addTodo(doc, "Buy groceries", "user-alice")
+    doc = addTodo(doc, "Write documentation", "user-alice")
+    doc = addTodo(doc, "Review pull requests", "user-alice")
+
+    console.log(doc.todos.length)
+    // Output: 3
+    ```
+
+    <Note>
+    Arrays in Automerge work just like regular JavaScript arrays. You can use `push()`, `splice()`, and other array methods inside change blocks.
+    </Note>
+  </Step>
+
+  <Step title="Toggle Todo Completion">
+    Implement toggling a todo's completion status:
+
+    ```typescript
+    function toggleTodo(
+      doc: Automerge.Doc<TodoDoc>,
+      todoId: string
+    ): Automerge.Doc<TodoDoc> {
+      return Automerge.change(doc, `Toggle todo ${todoId}`, d => {
+        const todo = d.todos.find(t => t.id === todoId)
+        if (todo) {
+          todo.completed = !todo.completed
+        }
+      })
+    }
+
+    // Mark the first todo as completed
+    const firstTodoId = doc.todos[0].id
+    doc = toggleTodo(doc, firstTodoId)
+
+    console.log(doc.todos[0].completed)
+    // Output: true
+    ```
+  </Step>
+
+  <Step title="Delete Todo Items">
+    Implement deleting todos:
+
+    ```typescript
+    function deleteTodo(
+      doc: Automerge.Doc<TodoDoc>,
+      todoId: string
+    ): Automerge.Doc<TodoDoc> {
+      return Automerge.change(doc, `Delete todo ${todoId}`, d => {
+        const index = d.todos.findIndex(t => t.id === todoId)
+        if (index !== -1) {
+          d.todos.splice(index, 1)
+        }
+      })
+    }
+
+    // Delete a todo
+    doc = deleteTodo(doc, firstTodoId)
+
+    console.log(doc.todos.length)
+    // Output: 2
+    ```
+  </Step>
+
+  <Step title="Handle Concurrent Edits">
+    Now let's see how Automerge handles multiple users editing simultaneously:
+
+    ```typescript
+    // Alice's document
+    let aliceDoc = Automerge.init<TodoDoc>("user-alice")
+    aliceDoc = Automerge.change(aliceDoc, d => {
+      d.title = "Team Tasks"
+      d.todos = []
+    })
+
+    // Bob gets a copy of Alice's document
+    let bobDoc = Automerge.clone(aliceDoc, "user-bob")
+
+    // Alice adds a todo
+    aliceDoc = addTodo(aliceDoc, "Deploy to production", "user-alice")
+
+    // At the same time, Bob adds a different todo
+    bobDoc = addTodo(bobDoc, "Update documentation", "user-bob")
+
+    // Now we merge their changes
+    aliceDoc = Automerge.merge(aliceDoc, bobDoc)
+    bobDoc = Automerge.merge(bobDoc, aliceDoc)
+
+    // Both documents now have both todos
+    console.log(aliceDoc.todos.length)
+    // Output: 2
+    console.log(aliceDoc.todos.map(t => t.text))
+    // Output: ["Deploy to production", "Update documentation"]
+
+    // Alice and Bob see the same state
+    console.log(JSON.stringify(aliceDoc) === JSON.stringify(bobDoc))
+    // Output: true
+    ```
+
+    <Tip>
+    Automerge automatically merges concurrent list insertions. The order may vary based on actor IDs, but both users will see the same final state.
+    </Tip>
+  </Step>
+
+  <Step title="Handle Conflicting Updates">
+    What happens when two users edit the same todo?
+
+    ```typescript
+    // Start with a shared document
+    let doc1 = Automerge.from<TodoDoc>({
+      title: "Shared List",
+      todos: [{
+        id: "task-1",
+        text: "Original task",
+        completed: false,
+        createdAt: new Date(),
+        createdBy: "system"
+      }]
+    }, "user-alice")
+
+    let doc2 = Automerge.clone(doc1, "user-bob")
+
+    // Alice edits the task text
+    doc1 = Automerge.change(doc1, d => {
+      d.todos[0].text = "Updated by Alice"
+    })
+
+    // Bob edits the same task text
+    doc2 = Automerge.change(doc2, d => {
+      d.todos[0].text = "Updated by Bob"
+    })
+
+    // Merge the changes
+    const merged = Automerge.merge(doc1, doc2)
+
+    // Automerge deterministically chooses one value
+    console.log(merged.todos[0].text)
+    // Output: "Updated by Bob" (deterministic based on actor IDs)
+
+    // You can inspect conflicts if needed
+    const conflicts = Automerge.getConflicts(merged.todos[0], "text")
+    if (conflicts) {
+      console.log("Conflicting values:", Object.values(conflicts))
+      // Output: ["Updated by Alice", "Updated by Bob"]
+    }
+    ```
+
+    <Note>
+    When conflicts occur on property assignments, Automerge picks one value deterministically. You can use `getConflicts()` to see all conflicting values and implement custom conflict resolution if needed.
+    </Note>
+  </Step>
+
+  <Step title="Persist and Load">
+    Save your document and load it later:
+
+    ```typescript
+    // Save the document to binary format
+    const binary = Automerge.save(doc)
+
+    // Store in localStorage (browser)
+    localStorage.setItem("todos", Buffer.from(binary).toString("base64"))
+
+    // Load it back later
+    const loadedBinary = Buffer.from(
+      localStorage.getItem("todos") || "",
+      "base64"
+    )
+    const loadedDoc = Automerge.load<TodoDoc>(loadedBinary)
+
+    console.log(loadedDoc.todos)
+    // All your todos are restored!
+    ```
+  </Step>
+
+  <Step title="Track Changes with Patches">
+    Listen to changes for UI updates:
+
+    ```typescript
+    const patches: Automerge.Patch[] = []
+
+    let doc = Automerge.init<TodoDoc>({
+      patchCallback: (p, info) => {
+        patches.push(...p)
+        console.log(`Change from ${info.source}:`, p)
+      }
+    })
+
+    doc = Automerge.change(doc, d => {
+      d.title = "My List"
+      d.todos = []
+    })
+
+    doc = addTodo(doc, "Learn Automerge", "user-alice")
+
+    // Patches tell you exactly what changed
+    // Use them to update your UI efficiently
+    patches.forEach(patch => {
+      if (patch.action === "put" && patch.path[0] === "todos") {
+        console.log("Todo added:", patch.value)
+      }
+    })
+    ```
+
+    <Tip>
+    Patch callbacks are essential for building reactive UIs. They tell you exactly what changed, so you can update only the affected parts of your interface.
+    </Tip>
+  </Step>
+</Steps>
+
+## Complete Example
+
+Here's a complete todo list implementation:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type TodoItem = {
+  id: string
+  text: string
+  completed: boolean
+  createdAt: Date
+  createdBy: string
+}
+
+type TodoDoc = {
+  todos: TodoItem[]
+  title: string
+}
+
+class CollaborativeTodoList {
+  private doc: Automerge.Doc<TodoDoc>
+  private actorId: string
+
+  constructor(actorId: string) {
+    this.actorId = actorId
+    this.doc = Automerge.init<TodoDoc>(actorId, {
+      patchCallback: (patches, info) => {
+        this.onPatches(patches, info)
+      }
+    })
+
+    this.doc = Automerge.change(this.doc, "Initialize", d => {
+      d.title = "My Tasks"
+      d.todos = []
+    })
+  }
+
+  addTodo(text: string) {
+    this.doc = Automerge.change(this.doc, `Add: ${text}`, d => {
+      d.todos.push({
+        id: `${this.actorId}-${Date.now()}`,
+        text,
+        completed: false,
+        createdAt: new Date(),
+        createdBy: this.actorId
+      })
+    })
+  }
+
+  toggleTodo(todoId: string) {
+    this.doc = Automerge.change(this.doc, `Toggle: ${todoId}`, d => {
+      const todo = d.todos.find(t => t.id === todoId)
+      if (todo) {
+        todo.completed = !todo.completed
+      }
+    })
+  }
+
+  deleteTodo(todoId: string) {
+    this.doc = Automerge.change(this.doc, `Delete: ${todoId}`, d => {
+      const index = d.todos.findIndex(t => t.id === todoId)
+      if (index !== -1) {
+        d.todos.splice(index, 1)
+      }
+    })
+  }
+
+  updateTitle(title: string) {
+    this.doc = Automerge.change(this.doc, "Update title", d => {
+      d.title = title
+    })
+  }
+
+  // Get changes to send to other peers
+  getChanges(theirHeads: Automerge.Heads): Automerge.Change[] {
+    const theirDoc = Automerge.view(this.doc, theirHeads)
+    return Automerge.getChanges(theirDoc, this.doc)
+  }
+
+  // Apply changes from other peers
+  applyChanges(changes: Automerge.Change[]) {
+    const [newDoc] = Automerge.applyChanges(this.doc, changes)
+    this.doc = newDoc
+  }
+
+  // Merge with another document
+  merge(otherDoc: Automerge.Doc<TodoDoc>) {
+    this.doc = Automerge.merge(this.doc, otherDoc)
+  }
+
+  // Get current state
+  getState(): TodoDoc {
+    return this.doc
+  }
+
+  // Save to binary
+  save(): Uint8Array {
+    return Automerge.save(this.doc)
+  }
+
+  // Load from binary
+  load(binary: Uint8Array) {
+    this.doc = Automerge.load<TodoDoc>(binary, this.actorId)
+  }
+
+  private onPatches(patches: Automerge.Patch[], info: any) {
+    // Update UI based on patches
+    console.log("Document updated:", patches)
+  }
+}
+
+// Usage
+const aliceList = new CollaborativeTodoList("user-alice")
+aliceList.addTodo("Review PRs")
+aliceList.addTodo("Write tests")
+
+const bobList = new CollaborativeTodoList("user-bob")
+bobList.merge(aliceList.getState())
+bobList.addTodo("Deploy app")
+
+aliceList.merge(bobList.getState())
+
+console.log(aliceList.getState().todos)
+// All todos from both users are merged!
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Real-time Sync" icon="rotate" href="/examples/real-time-sync">
+    Add network synchronization to your todo list
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/changes">
+    Explore all Automerge APIs
+  </Card>
+</CardGroup>
+
+## Key Takeaways
+
+- Use `init()` to create documents and `change()` to modify them
+- `merge()` automatically combines changes from multiple users
+- Conflicts on properties are resolved deterministically
+- Use `save()` and `load()` for persistence
+- Patch callbacks enable reactive UI updates
+- Each user needs a unique actor ID

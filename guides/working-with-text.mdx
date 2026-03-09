@@ -1,0 +1,275 @@
+---
+title: Working with Text
+description: Learn how to handle collaborative text editing in Automerge
+---
+
+Automerge treats strings as sequences of characters that can be collaboratively edited. This guide covers text operations for building collaborative editors.
+
+## Basic text editing
+
+In Automerge, strings can be modified using the `splice()` function:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ text: "The quick fox" })
+
+doc = Automerge.change(doc, d => {
+  // Insert text at position 10
+  Automerge.splice(d, ["text"], 10, 0, "brown ")
+})
+
+console.log(doc.text) // "The quick brown fox"
+```
+
+## The splice function
+
+The `splice()` function signature:
+
+```typescript
+Automerge.splice(
+  doc,           // The document (within a change callback)
+  path,          // Path to the string as an array
+  index,         // Position to start editing
+  deleteCount,   // Number of characters to delete
+  insertText     // Text to insert (optional)
+)
+```
+
+### Inserting text
+
+```typescript
+doc = Automerge.change(doc, d => {
+  // Insert "Hello " at the beginning
+  Automerge.splice(d, ["text"], 0, 0, "Hello ")
+})
+```
+
+### Deleting text
+
+```typescript
+doc = Automerge.change(doc, d => {
+  // Delete 5 characters starting at position 0
+  Automerge.splice(d, ["text"], 0, 5)
+})
+```
+
+### Replacing text
+
+```typescript
+doc = Automerge.change(doc, d => {
+  // Replace characters 0-5 with "Hi"
+  Automerge.splice(d, ["text"], 0, 5, "Hi")
+})
+```
+
+## Working with nested text
+
+The path parameter allows you to edit text in nested structures:
+
+```typescript
+type Doc = {
+  chapters: Array<{ title: string, content: string }>
+}
+
+let doc = Automerge.from<Doc>({
+  chapters: [
+    { title: "Chapter 1", content: "Once upon a time" }
+  ]
+})
+
+doc = Automerge.change(doc, d => {
+  // Edit the content of the first chapter
+  Automerge.splice(d, ["chapters", 0, "content"], 17, 0, "...")
+})
+
+console.log(doc.chapters[0].content) // "Once upon a time..."
+```
+
+## Initializing text
+
+You can initialize text directly in `from()` or during a change:
+
+```typescript
+// Initialize with from()
+let doc = Automerge.from({ text: "Hello, world!" })
+
+// Or in a change
+let doc2 = Automerge.init<{ text: string }>()
+doc2 = Automerge.change(doc2, d => {
+  d.text = "Hello, world!"
+})
+```
+
+## Concurrent text editing
+
+Automerge handles concurrent edits automatically:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc1 = Automerge.from({ text: "Hello" })
+let doc2 = Automerge.clone(doc1)
+
+// Concurrent edits
+doc1 = Automerge.change(doc1, d => {
+  Automerge.splice(d, ["text"], 5, 0, " Alice")
+})
+
+doc2 = Automerge.change(doc2, d => {
+  Automerge.splice(d, ["text"], 5, 0, " Bob")
+})
+
+// Merge the documents
+const merged = Automerge.merge(doc1, doc2)
+
+// Automerge preserves both edits
+console.log(merged.text) // Either "Hello Alice Bob" or "Hello Bob Alice"
+```
+
+<Note>
+When concurrent insertions happen at the same position, Automerge uses a deterministic ordering based on actor IDs to decide which text comes first.
+</Note>
+
+## Unicode and emojis
+
+Automerge uses JavaScript string indexing (UTF-16 code units):
+
+```typescript
+let doc = Automerge.from({ text: "😀😀" })
+
+doc = Automerge.change(doc, d => {
+  // Insert at JavaScript index 2 (between emojis)
+  Automerge.splice(d, ["text"], 2, 0, "🙃")
+})
+
+console.log(doc.text) // "😀🙃😀"
+```
+
+<Warning>
+Be careful with multi-code-unit characters (emojis, etc.). The index parameter uses JavaScript's character indexing, where some emojis count as 2 or more units.
+</Warning>
+
+## The updateText helper
+
+For cases where you have a new version of text and want Automerge to compute the diff:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ text: "Hello world!" })
+
+doc = Automerge.change(doc, d => {
+  // Automerge will compute the minimal diff
+  Automerge.updateText(d, ["text"], "Goodbye world!")
+})
+
+console.log(doc.text) // "Goodbye world!"
+```
+
+<Tip>
+`updateText()` is useful when you can't capture individual edit operations (e.g., pasting from clipboard) but want changes to merge well with concurrent edits.
+</Tip>
+
+## Example: Building a collaborative editor
+
+Here's a simple collaborative editor using Automerge:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+class CollaborativeEditor {
+  private doc: Automerge.Doc<{ content: string }>
+  private textarea: HTMLTextAreaElement
+  
+  constructor(textarea: HTMLTextAreaElement) {
+    this.textarea = textarea
+    this.doc = Automerge.from({ content: "" })
+    
+    // Handle local edits
+    textarea.addEventListener("input", (e) => this.handleInput(e))
+  }
+  
+  private handleInput(e: Event) {
+    const target = e.target as HTMLTextAreaElement
+    const newText = target.value
+    
+    this.doc = Automerge.change(this.doc, d => {
+      Automerge.updateText(d, ["content"], newText)
+    })
+    
+    // Send changes to other peers
+    this.sendChanges()
+  }
+  
+  applyRemoteChanges(changes: Uint8Array) {
+    const oldText = this.doc.content
+    const oldSelection = this.textarea.selectionStart
+    
+    // Apply changes from remote peer
+    this.doc = Automerge.loadIncremental(this.doc, changes)
+    
+    // Update textarea if text changed
+    if (this.doc.content !== oldText) {
+      this.textarea.value = this.doc.content
+      
+      // Try to preserve cursor position
+      this.textarea.selectionStart = oldSelection
+      this.textarea.selectionEnd = oldSelection
+    }
+  }
+  
+  private sendChanges() {
+    const changes = Automerge.saveIncremental(this.doc)
+    // Send to server/peers via WebSocket, WebRTC, etc.
+  }
+}
+```
+
+## Text in arrays
+
+You can also edit text within arrays:
+
+```typescript
+let doc = Automerge.from({ 
+  paragraphs: ["First paragraph", "Second paragraph"] 
+})
+
+doc = Automerge.change(doc, d => {
+  // Edit the second paragraph
+  Automerge.splice(
+    d, 
+    ["paragraphs", 1],  // Path to second paragraph
+    0,                   // Position
+    0,                   // Delete count
+    "Updated "           // Text to insert
+  )
+})
+
+console.log(doc.paragraphs[1]) // "Updated Second paragraph"
+```
+
+## Best practices
+
+<Tip>
+**Capture individual edits**: When possible, capture individual `splice()` operations rather than using `updateText()`. This produces better merge behavior.
+</Tip>
+
+<Tip>
+**Use cursors for position tracking**: For tracking cursor positions across edits, see the [Cursors guide](/guides/cursors).
+</Tip>
+
+<Warning>
+**Don't reassign strings**: Setting `d.text = newValue` replaces the entire string history. Use `splice()` or `updateText()` instead to preserve edit history.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Marks and Formatting" icon="highlighter" href="/guides/marks-and-formatting">
+    Add rich text formatting to your text
+  </Card>
+  <Card title="Cursors" icon="i-cursor" href="/guides/cursors">
+    Track cursor positions across concurrent edits
+  </Card>
+</CardGroup>

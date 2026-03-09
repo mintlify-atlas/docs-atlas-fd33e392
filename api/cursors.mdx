@@ -1,0 +1,535 @@
+---
+title: Cursors
+description: Position tracking in text with Automerge cursors
+---
+
+## Overview
+
+Cursors in Automerge represent stable positions in text that automatically adjust as the text is edited. Unlike numeric indices, cursors maintain their relative position even when text is inserted or deleted before them.
+
+---
+
+## getCursor
+
+Create a cursor at a specific position in text.
+
+```typescript
+function getCursor<T>(
+  doc: Doc<T>,
+  path: Prop[],
+  position: CursorPosition,
+  move?: MoveCursor
+): Cursor
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document
+</ParamField>
+
+<ParamField path="path" type="Prop[]" required>
+  The path to the text string
+</ParamField>
+
+<ParamField path="position" type="CursorPosition" required>
+  The position for the cursor:
+  - A numeric index (0 to text.length)
+  - `"start"` (always resolves to 0)
+  - `"end"` (always resolves to text.length)
+  
+  Negative numbers create a "start" cursor. Numbers >= text.length create an "end" cursor.
+</ParamField>
+
+<ParamField path="move" type="MoveCursor">
+  Direction to move if the character at this position is deleted:
+  - `"after"` (default): Move towards end of string
+  - `"before"`: Move towards start of string
+</ParamField>
+
+<ResponseField name="return" type="Cursor">
+  A cursor string that can be shared across peers and stored
+  
+  ```typescript
+  type Cursor = string // Format: "<index>@<id>" or "s" or "e"
+  ```
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Basic Cursor
+let doc = Automerge.from({ text: "Hello World" })
+
+// Create cursor at position 5
+const cursor = Automerge.getCursor(doc, ["text"], 5)
+console.log(cursor) // e.g., "5@actor123"
+
+// Use cursor later
+const pos = Automerge.getCursorPosition(doc, ["text"], cursor)
+console.log(pos) // 5
+```
+
+```typescript Start and End Cursors
+// Start cursor (always position 0)
+const startCursor = Automerge.getCursor(doc, ["text"], "start")
+// or
+const startCursor2 = Automerge.getCursor(doc, ["text"], -1)
+
+// End cursor (always position text.length)
+const endCursor = Automerge.getCursor(doc, ["text"], "end")
+// or
+const endCursor2 = Automerge.getCursor(doc, ["text"], 999)
+```
+
+```typescript Move Behavior
+let doc = Automerge.from({ text: "ABC" })
+
+// Cursor that moves forward when char is deleted
+const cursorAfter = Automerge.getCursor(
+  doc,
+  ["text"],
+  1,
+  "after"
+)
+
+// Cursor that moves backward when char is deleted
+const cursorBefore = Automerge.getCursor(
+  doc,
+  ["text"],
+  1,
+  "before"
+)
+
+// Delete character at position 1
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["text"], 1, 1)
+})
+
+// Check positions
+Automerge.getCursorPosition(doc, ["text"], cursorAfter)  // 1 (moved right)
+Automerge.getCursorPosition(doc, ["text"], cursorBefore) // 0 (moved left)
+```
+
+```typescript Nested Path
+type Doc = {
+  posts: Array<{ title: string; content: string }>
+}
+
+let doc = Automerge.from<Doc>({
+  posts: [{ title: "Post", content: "Hello" }]
+})
+
+const cursor = Automerge.getCursor(
+  doc,
+  ["posts", 0, "content"],
+  5
+)
+```
+
+</CodeGroup>
+
+---
+
+## getCursorPosition
+
+Get the current numeric position of a cursor.
+
+```typescript
+function getCursorPosition<T>(
+  doc: Doc<T>,
+  path: Prop[],
+  cursor: Cursor
+): number
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document
+</ParamField>
+
+<ParamField path="path" type="Prop[]" required>
+  The path to the text string
+</ParamField>
+
+<ParamField path="cursor" type="Cursor" required>
+  The cursor to resolve
+</ParamField>
+
+<ResponseField name="return" type="number">
+  The current numeric index of the cursor in the text
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Track Position Changes
+let doc = Automerge.from({ text: "Hello" })
+const cursor = Automerge.getCursor(doc, ["text"], 5)
+
+console.log(Automerge.getCursorPosition(doc, ["text"], cursor)) // 5
+
+// Insert text before cursor
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["text"], 0, 0, "Well, ")
+})
+
+// Cursor automatically adjusted
+console.log(Automerge.getCursorPosition(doc, ["text"], cursor)) // 11
+console.log(doc.text) // "Well, Hello"
+```
+
+```typescript Multiple Document States
+let doc1 = Automerge.from({ text: "Hello World" })
+const cursor = Automerge.getCursor(doc1, ["text"], 6)
+
+let doc2 = Automerge.clone(doc1)
+
+// Different edits on each doc
+doc1 = Automerge.change(doc1, d => {
+  Automerge.splice(d, ["text"], 0, 0, "Hi ")
+})
+
+doc2 = Automerge.change(doc2, d => {
+  Automerge.splice(d, ["text"], 11, 0, "!")
+})
+
+// Same cursor, different positions
+console.log(Automerge.getCursorPosition(doc1, ["text"], cursor)) // 9
+console.log(Automerge.getCursorPosition(doc2, ["text"], cursor)) // 6
+
+// After merge, cursor resolves correctly
+const merged = Automerge.merge(doc1, doc2)
+console.log(Automerge.getCursorPosition(merged, ["text"], cursor)) // 9
+console.log(merged.text) // "Hi Hello World!"
+```
+
+</CodeGroup>
+
+---
+
+## Cursor Type
+
+Cursors are represented as strings that can be serialized and shared.
+
+```typescript
+type Cursor = string
+
+type CursorPosition = number | "start" | "end"
+
+type MoveCursor = "before" | "after"
+```
+
+### Cursor Format
+
+Cursors have one of these formats:
+- `"s"` - Start cursor (always position 0)
+- `"e"` - End cursor (always position text.length)
+- `"<index>@<actorId>"` - Position-specific cursor (e.g., `"5@abc123"`)
+
+---
+
+## Use Cases
+
+### Text Editor Selection
+
+<CodeGroup>
+
+```typescript Selection State
+type Selection = {
+  anchor: string // Cursor
+  focus: string  // Cursor
+}
+
+let doc = Automerge.from<{ text: string }>({
+  text: "Hello World"
+})
+
+// User selects "World" (positions 6-11)
+const selection: Selection = {
+  anchor: Automerge.getCursor(doc, ["text"], 6),
+  focus: Automerge.getCursor(doc, ["text"], 11)
+}
+
+// Later, get current selection positions
+const anchorPos = Automerge.getCursorPosition(
+  doc,
+  ["text"],
+  selection.anchor
+)
+const focusPos = Automerge.getCursorPosition(
+  doc,
+  ["text"],
+  selection.focus
+)
+
+console.log(`Selection: ${anchorPos}-${focusPos}`)
+```
+
+```typescript Collaborative Cursors
+type User = {
+  id: string
+  name: string
+  cursor: string // Cursor
+  color: string
+}
+
+const users = new Map<string, User>()
+
+function updateUserCursor(userId: string, position: number) {
+  const cursor = Automerge.getCursor(doc, ["text"], position)
+  
+  users.set(userId, {
+    id: userId,
+    name: getUserName(userId),
+    cursor,
+    color: getUserColor(userId)
+  })
+  
+  broadcastCursor(userId, cursor)
+}
+
+function renderCursors() {
+  users.forEach(user => {
+    const pos = Automerge.getCursorPosition(
+      doc,
+      ["text"],
+      user.cursor
+    )
+    
+    renderCursorAt(pos, user.color, user.name)
+  })
+}
+```
+
+</CodeGroup>
+
+### Annotations and Comments
+
+<CodeGroup>
+
+```typescript Comment System
+type Comment = {
+  id: string
+  author: string
+  text: string
+  start: string  // Cursor
+  end: string    // Cursor
+}
+
+let doc = Automerge.from({
+  content: "This is the document content.",
+  comments: [] as Comment[]
+})
+
+// Add comment to "document" (positions 12-20)
+doc = Automerge.change(doc, d => {
+  const comment: Comment = {
+    id: "comment-1",
+    author: "Alice",
+    text: "Should we rephrase this?",
+    start: Automerge.getCursor(d as any, ["content"], 12),
+    end: Automerge.getCursor(d as any, ["content"], 20)
+  }
+  
+  d.comments.push(comment)
+})
+
+// Get current comment position
+function getCommentRange(comment: Comment) {
+  return {
+    start: Automerge.getCursorPosition(doc, ["content"], comment.start),
+    end: Automerge.getCursorPosition(doc, ["content"], comment.end)
+  }
+}
+```
+
+```typescript Persistent Bookmarks
+type Bookmark = {
+  name: string
+  cursor: string
+}
+
+let doc = Automerge.from({
+  text: "Chapter 1\n\nOnce upon a time...",
+  bookmarks: [] as Bookmark[]
+})
+
+// Add bookmark
+doc = Automerge.change(doc, d => {
+  d.bookmarks.push({
+    name: "Chapter 1 Start",
+    cursor: Automerge.getCursor(d as any, ["text"], 0)
+  })
+})
+
+// Jump to bookmark
+function jumpToBookmark(bookmarkName: string) {
+  const bookmark = doc.bookmarks.find(b => b.name === bookmarkName)
+  if (bookmark) {
+    const pos = Automerge.getCursorPosition(
+      doc,
+      ["text"],
+      bookmark.cursor
+    )
+    editor.setCursorPosition(pos)
+  }
+}
+```
+
+</CodeGroup>
+
+### Edit History with Position Tracking
+
+```typescript
+type Edit = {
+  timestamp: number
+  user: string
+  cursor: string
+  description: string
+}
+
+let doc = Automerge.from({
+  text: "",
+  editHistory: [] as Edit[]
+})
+
+// Record edit with cursor position
+function recordEdit(position: number, description: string) {
+  doc = Automerge.change(doc, d => {
+    d.editHistory.push({
+      timestamp: Date.now(),
+      user: currentUser.id,
+      cursor: Automerge.getCursor(d as any, ["text"], position),
+      description
+    })
+  })
+}
+
+// Show edit history with current positions
+function showEditHistory() {
+  doc.editHistory.forEach(edit => {
+    const currentPos = Automerge.getCursorPosition(
+      doc,
+      ["text"],
+      edit.cursor
+    )
+    
+    console.log(
+      `${edit.user} at position ${currentPos}: ${edit.description}`
+    )
+  })
+}
+```
+
+---
+
+## Best Practices
+
+### 1. Store cursors, not positions
+
+```typescript
+// Good: Store cursor
+const bookmark = {
+  position: Automerge.getCursor(doc, ["text"], index)
+}
+
+// Later: Get current position
+const currentPos = Automerge.getCursorPosition(
+  doc,
+  ["text"],
+  bookmark.position
+)
+
+// Bad: Store numeric position
+const bookmark = { position: index }
+// This won't update as document changes!
+```
+
+### 2. Use appropriate move behavior
+
+```typescript
+// For text cursor: "after" (default)
+const textCursor = Automerge.getCursor(
+  doc,
+  ["text"],
+  pos,
+  "after"
+)
+// When char is deleted, cursor moves forward
+
+// For selection bounds: "before" for start, "after" for end
+const selectionStart = Automerge.getCursor(
+  doc,
+  ["text"],
+  start,
+  "before"
+)
+const selectionEnd = Automerge.getCursor(
+  doc,
+  ["text"],
+  end,
+  "after"
+)
+```
+
+### 3. Share cursors across network
+
+```typescript
+// Cursors are strings - easy to serialize
+const cursor = Automerge.getCursor(doc, ["text"], position)
+
+// Send to other peers
+websocket.send(JSON.stringify({
+  type: "cursor",
+  userId: "user123",
+  cursor: cursor  // Just a string!
+}))
+
+// Receive from peer
+websocket.on("message", data => {
+  const msg = JSON.parse(data)
+  if (msg.type === "cursor") {
+    const pos = Automerge.getCursorPosition(
+      doc,
+      ["text"],
+      msg.cursor
+    )
+    showPeerCursor(msg.userId, pos)
+  }
+})
+```
+
+### 4. Use start/end cursors for edges
+
+```typescript
+// For beginning of text
+const startCursor = Automerge.getCursor(doc, ["text"], "start")
+// Always resolves to 0, even if text is prepended
+
+// For end of text
+const endCursor = Automerge.getCursor(doc, ["text"], "end")
+// Always resolves to text.length
+```
+
+---
+
+## Cursors with Splice
+
+Cursors can be used directly in splice operations:
+
+```typescript
+let doc = Automerge.from({ text: "Hello World" })
+const cursor = Automerge.getCursor(doc, ["text"], 6)
+
+// Insert at cursor position
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["text"], cursor, 0, "Beautiful ")
+})
+
+// Cursor now points to end of inserted text
+const newPos = Automerge.getCursorPosition(doc, ["text"], cursor)
+console.log(newPos) // 16
+console.log(doc.text) // "Hello Beautiful World"
+```
+
+This makes cursors perfect for implementing text editors where you need to track the insertion point.

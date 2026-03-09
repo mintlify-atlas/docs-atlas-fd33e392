@@ -1,0 +1,530 @@
+---
+title: Performance Optimization
+description: Memory usage, storage optimization, and best practices for production use
+---
+
+## Automerge 3 Performance Improvements
+
+Automerge 3 introduced significant performance enhancements:
+
+<Note>
+Automerge 3 achieved approximately **10x reduction in memory usage** compared to previous versions, making it suitable for larger documents and more concurrent users.
+</Note>
+
+Key improvements include:
+- More efficient internal data structures
+- Better compression in the binary format
+- Optimized WebAssembly implementation
+- Reduced memory allocations during changes
+- Faster sync protocol
+
+## Memory Management
+
+### Understanding Memory Usage
+
+Automerge documents consist of:
+1. **Operation history** - All changes ever made (immutable)
+2. **Current state** - The materialized document tree
+3. **Indexes** - For efficient lookups and merges
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+const doc = Automerge.from({ data: "value" })
+
+// Get memory statistics
+const stats = Automerge.stats(doc)
+console.log(stats)
+// {
+//   numChanges: number,    // Total changes in document
+//   numOps: number,        // Total operations
+//   numActors: number,     // Unique actors
+// }
+```
+
+### Explicit Memory Freeing
+
+In environments without `FinalizationRegistry`, manually free memory:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ large: "data" })
+
+// Use the document...
+
+// When completely done with it:
+Automerge.free(doc)
+// Don't use doc after this!
+```
+
+<Warning>
+After calling `free()`, any attempt to use the document will result in errors. Only call `free()` when you're completely done with a document.
+</Warning>
+
+### Memory Best Practices
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// ✅ Good: Reuse document references
+let doc = Automerge.init()
+for (let i = 0; i < 1000; i++) {
+  doc = Automerge.change(doc, d => {
+    d.counter = i
+  })
+}
+
+// ❌ Bad: Creating unnecessary clones
+let doc2 = Automerge.init()
+for (let i = 0; i < 1000; i++) {
+  const cloned = Automerge.clone(doc2) // Wasteful!
+  doc2 = Automerge.change(cloned, d => {
+    d.counter = i
+  })
+}
+```
+
+## Storage Optimization
+
+### Compressed Binary Format
+
+Automerge provides efficient binary serialization:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({
+  users: Array.from({ length: 100 }, (_, i) => ({
+    id: i,
+    name: `User ${i}`,
+    email: `user${i}@example.com`
+  }))
+})
+
+// Full save - compressed binary format
+const saved = Automerge.save(doc)
+console.log(`Saved size: ${saved.byteLength} bytes`)
+
+// Load from binary
+const loaded = Automerge.load(saved)
+```
+
+### Incremental Saves
+
+For append-only storage, use incremental saves:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ counter: 0 })
+
+// Save full document initially
+const fullSave = Automerge.save(doc)
+await storage.write(fullSave)
+
+// Make changes
+doc = Automerge.change(doc, d => { d.counter = 1 })
+doc = Automerge.change(doc, d => { d.counter = 2 })
+
+// Save only new changes
+const incremental = Automerge.saveIncremental(doc)
+await storage.append(incremental)
+
+// Later: load both
+let restored = Automerge.load(fullSave)
+restored = Automerge.loadIncremental(restored, incremental)
+```
+
+### Compaction Strategy
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+class CompactingStorage {
+  private doc: Automerge.Doc<any>
+  private changesSinceCompaction = 0
+  private readonly compactionThreshold = 100
+
+  constructor(doc: Automerge.Doc<any>) {
+    this.doc = doc
+  }
+
+  async change(fn: (doc: any) => void) {
+    this.doc = Automerge.change(this.doc, fn)
+    this.changesSinceCompaction++
+
+    // Periodically save full snapshot
+    if (this.changesSinceCompaction >= this.compactionThreshold) {
+      await this.compact()
+    } else {
+      // Save incremental
+      const incremental = Automerge.saveIncremental(this.doc)
+      await this.appendToStorage(incremental)
+    }
+  }
+
+  private async compact() {
+    const fullSave = Automerge.save(this.doc)
+    await this.replaceStorage(fullSave)
+    this.changesSinceCompaction = 0
+  }
+
+  private async appendToStorage(data: Uint8Array) {
+    // Append to your storage system
+  }
+
+  private async replaceStorage(data: Uint8Array) {
+    // Replace storage with compacted version
+  }
+}
+```
+
+## Change Performance
+
+### Batching Changes
+
+Group related modifications into a single change:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// ❌ Bad: Many small changes
+let doc1 = Automerge.from({ items: [] })
+for (let i = 0; i < 100; i++) {
+  doc1 = Automerge.change(doc1, d => {
+    d.items.push(i) // Each push is a separate change
+  })
+}
+
+// ✅ Good: Single batched change
+let doc2 = Automerge.from({ items: [] })
+doc2 = Automerge.change(doc2, d => {
+  for (let i = 0; i < 100; i++) {
+    d.items.push(i)
+  }
+})
+
+console.log(Automerge.getAllChanges(doc1).length) // 101
+console.log(Automerge.getAllChanges(doc2).length) // 2
+```
+
+<Tip>
+Batching changes reduces:
+- Number of history entries
+- Sync overhead
+- Storage size
+- Memory allocations
+</Tip>
+
+### Avoiding Unnecessary Changes
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ count: 0 })
+
+// ❌ Bad: No-op change creates history entry
+doc = Automerge.change(doc, d => {
+  d.count = d.count // Pointless assignment
+})
+
+// ✅ Good: Check before changing
+const newValue = 5
+if (doc.count !== newValue) {
+  doc = Automerge.change(doc, d => {
+    d.count = newValue
+  })
+}
+
+// ✅ Also good: Let Automerge optimize
+doc = Automerge.change(doc, d => {
+  // Only actual changes create operations
+  d.count = 5
+  d.count = 5 // This won't create a duplicate operation
+})
+```
+
+## Sync Performance
+
+### Efficient Sync Protocol
+
+The Automerge sync protocol is optimized for minimal data transfer:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// Initialize sync states
+let doc1 = Automerge.from({ value: 1 })
+let doc2 = Automerge.init()
+
+let sync1 = Automerge.initSyncState()
+let sync2 = Automerge.initSyncState()
+
+// Sync loop
+let message: Uint8Array | null
+
+// Generate initial message
+[sync1, message] = Automerge.generateSyncMessage(doc1, sync1)
+
+if (message) {
+  // Receive on other side
+  [doc2, sync2] = Automerge.receiveSyncMessage(doc2, sync2, message)
+  
+  // Generate response
+  [sync2, message] = Automerge.generateSyncMessage(doc2, sync2)
+  
+  if (message) {
+    // Complete the sync
+    [doc1, sync1] = Automerge.receiveSyncMessage(doc1, sync1, message)
+  }
+}
+
+// Check if in sync
+const inSync = Automerge.hasOurChanges(doc1, sync2)
+console.log("Documents synchronized:", inSync)
+```
+
+### Tracking Sync State
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+class EfficientSync {
+  private syncStates = new Map<string, any>()
+  
+  getSyncState(peerId: string) {
+    if (!this.syncStates.has(peerId)) {
+      this.syncStates.set(peerId, Automerge.initSyncState())
+    }
+    return this.syncStates.get(peerId)!
+  }
+  
+  sync(doc: Automerge.Doc<any>, peerId: string) {
+    let syncState = this.getSyncState(peerId)
+    const [newSyncState, message] = 
+      Automerge.generateSyncMessage(doc, syncState)
+    
+    this.syncStates.set(peerId, newSyncState)
+    return message
+  }
+  
+  receiveSyncMessage(
+    doc: Automerge.Doc<any>,
+    peerId: string,
+    message: Uint8Array
+  ) {
+    let syncState = this.getSyncState(peerId)
+    const [newDoc, newSyncState] = 
+      Automerge.receiveSyncMessage(doc, syncState, message)
+    
+    this.syncStates.set(peerId, newSyncState)
+    return newDoc
+  }
+}
+```
+
+## Large Document Strategies
+
+### Document Size Limits
+
+<Warning>
+While Automerge can handle large documents, consider these practical limits:
+- **Operations**: Tens of thousands to millions (depending on complexity)
+- **Document size**: Megabytes to tens of megabytes in memory
+- **Concurrent actors**: Hundreds to thousands
+
+Beyond these, consider document splitting.
+</Warning>
+
+### Splitting Documents
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type User = { name: string; email: string }
+type UserCollection = { users: Record<string, Automerge.Doc<User>> }
+
+class ShardedUserStore {
+  private shards: Map<string, Automerge.Doc<User>> = new Map()
+  
+  getUser(userId: string): Automerge.Doc<User> {
+    if (!this.shards.has(userId)) {
+      this.shards.set(userId, Automerge.init())
+    }
+    return this.shards.get(userId)!
+  }
+  
+  updateUser(userId: string, fn: (user: User) => void) {
+    let doc = this.getUser(userId)
+    doc = Automerge.change(doc, fn)
+    this.shards.set(userId, doc)
+  }
+  
+  // Each user is a separate document
+  // Much better performance than one huge users array
+}
+
+const store = new ShardedUserStore()
+store.updateUser("alice", u => {
+  u.name = "Alice"
+  u.email = "alice@example.com"
+})
+```
+
+### Lazy Loading
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+class LazyDocumentStore {
+  private cache = new Map<string, Automerge.Doc<any>>()
+  private maxCacheSize = 100
+  
+  async loadDocument(docId: string): Promise<Automerge.Doc<any>> {
+    // Check cache
+    if (this.cache.has(docId)) {
+      return this.cache.get(docId)!
+    }
+    
+    // Load from storage
+    const data = await this.storage.read(docId)
+    const doc = Automerge.load(data)
+    
+    // Add to cache
+    this.cache.set(docId, doc)
+    
+    // Evict old entries if needed
+    if (this.cache.size > this.maxCacheSize) {
+      const oldest = this.cache.keys().next().value
+      this.cache.delete(oldest)
+    }
+    
+    return doc
+  }
+}
+```
+
+## Monitoring Performance
+
+### Document Statistics
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+function analyzeDocument(doc: Automerge.Doc<any>) {
+  const stats = Automerge.stats(doc)
+  const saved = Automerge.save(doc)
+  
+  return {
+    changes: stats.numChanges,
+    operations: stats.numOps,
+    actors: stats.numActors,
+    sizeBytes: saved.byteLength,
+    opsPerChange: stats.numOps / stats.numChanges,
+    bytesPerOp: saved.byteLength / stats.numOps
+  }
+}
+
+let doc = Automerge.from({ items: [] })
+
+// Add 1000 items
+doc = Automerge.change(doc, d => {
+  for (let i = 0; i < 1000; i++) {
+    d.items.push({ id: i, value: `Item ${i}` })
+  }
+})
+
+console.log(analyzeDocument(doc))
+// Monitor these metrics over time
+```
+
+### Performance Benchmarking
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+function benchmark(name: string, fn: () => void, iterations = 1000) {
+  const start = performance.now()
+  
+  for (let i = 0; i < iterations; i++) {
+    fn()
+  }
+  
+  const end = performance.now()
+  const avg = (end - start) / iterations
+  
+  console.log(`${name}: ${avg.toFixed(3)}ms avg over ${iterations} iterations`)
+}
+
+// Benchmark changes
+benchmark("Simple change", () => {
+  let doc = Automerge.init()
+  doc = Automerge.change(doc, d => {
+    d.value = Math.random()
+  })
+})
+
+// Benchmark merges
+let doc1 = Automerge.from({ a: 1 })
+let doc2 = Automerge.from({ b: 2 })
+benchmark("Merge", () => {
+  Automerge.merge(Automerge.clone(doc1), Automerge.clone(doc2))
+})
+```
+
+## Best Practices Summary
+
+<Tip>
+**Memory:**
+- Use `free()` in non-GC environments
+- Avoid unnecessary `clone()` operations
+- Monitor with `stats()`
+
+**Storage:**
+- Use `saveIncremental()` for append-only storage
+- Periodically compact with full `save()`
+- Consider document sharding for very large datasets
+
+**Changes:**
+- Batch related modifications
+- Avoid no-op changes
+- Use meaningful change messages
+
+**Sync:**
+- Maintain sync state per peer
+- Use the built-in sync protocol
+- Track sync status with `hasOurChanges()`
+
+**Scale:**
+- Split large documents into smaller ones
+- Implement lazy loading
+- Monitor performance metrics
+</Tip>
+
+## Release Information
+
+Check your Automerge version and build info:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+const info = Automerge.releaseInfo()
+console.log(info)
+// {
+//   js: { gitHead: "abc123..." },
+//   wasm: {
+//     gitHead: "def456...",
+//     cargoPackageName: "automerge",
+//     cargoPackageVersion: "0.x.x",
+//     rustcVersion: "1.x.x"
+//   }
+// }
+
+// Verify JS and WASM are from the same build
+if (info.wasm && info.js.gitHead !== info.wasm.gitHead) {
+  console.warn("JS and WASM built from different commits!")
+}
+```
+
+This information is useful for debugging performance issues and ensuring you're running compatible versions.

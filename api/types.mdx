@@ -1,0 +1,617 @@
+---
+title: Type Definitions
+description: Core TypeScript types and interfaces for Automerge
+---
+
+## Document Types
+
+### Doc\<T\>
+
+The main document type that wraps your data structure.
+
+```typescript
+type Doc<T> = { readonly [P in keyof T]: T[P] }
+```
+
+Provides read-only access to document fields. Mutations must happen within `change()` callbacks.
+
+#### Examples
+
+```typescript
+import type { Doc } from '@automerge/automerge'
+
+type MyData = {
+  title: string
+  count: number
+  items: string[]
+}
+
+let doc: Doc<MyData> = Automerge.init<MyData>()
+
+// Read access
+console.log(doc.title)
+
+// Mutation only in change()
+doc = Automerge.change(doc, d => {
+  d.title = "New Title"
+})
+```
+
+---
+
+## Value Types
+
+### AutomergeValue
+
+Any value that can be stored in an Automerge document.
+
+```typescript
+type AutomergeValue =
+  | ScalarValue
+  | { [key: string]: AutomergeValue }
+  | Array<AutomergeValue>
+```
+
+### ScalarValue
+
+Primitive values supported by Automerge.
+
+```typescript
+type ScalarValue =
+  | string
+  | number
+  | null
+  | boolean
+  | Date
+  | Counter
+  | Uint8Array
+  | ImmutableString
+```
+
+#### Examples
+
+```typescript
+let doc = Automerge.from({
+  // Scalar values
+  text: "hello",
+  count: 42,
+  active: true,
+  nullable: null,
+  timestamp: new Date(),
+  counter: new Automerge.Counter(0),
+  binary: new Uint8Array([1, 2, 3]),
+  
+  // Nested objects
+  metadata: {
+    author: "Alice",
+    version: 1
+  },
+  
+  // Arrays
+  items: ["one", "two", "three"]
+})
+```
+
+---
+
+## Special Types
+
+### Counter
+
+A CRDT counter that supports increment and decrement operations.
+
+```typescript
+class Counter {
+  value: number
+  
+  constructor(value?: number)
+  increment(delta?: number): number
+  decrement(delta?: number): number
+  valueOf(): number
+  toString(): string
+  toJSON(): number
+}
+```
+
+#### Examples
+
+<CodeGroup>
+
+```typescript Basic Counter
+import { Counter } from '@automerge/automerge'
+
+let doc = Automerge.from({
+  likes: new Counter(0)
+})
+
+doc = Automerge.change(doc, d => {
+  d.likes.increment(1)
+  d.likes.increment(5)
+  d.likes.decrement(2)
+})
+
+console.log(doc.likes.value) // 4
+```
+
+```typescript Multiple Counters
+type Stats = {
+  views: Counter
+  likes: Counter
+  shares: Counter
+}
+
+let doc = Automerge.from<Stats>({
+  views: new Counter(0),
+  likes: new Counter(0),
+  shares: new Counter(0)
+})
+
+doc = Automerge.change(doc, d => {
+  d.views.increment(1)
+  d.likes.increment(1)
+})
+```
+
+</CodeGroup>
+
+<Note>
+  Counters can only be incremented/decremented within a `change()` callback. Outside change blocks, they provide read-only access to the value.
+</Note>
+
+---
+
+### Number Types
+
+Explicit number types for precise numeric storage.
+
+```typescript
+class Int {
+  value: number
+  constructor(value: number) // Safe integer
+}
+
+class Uint {
+  value: number
+  constructor(value: number) // Unsigned integer
+}
+
+class Float64 {
+  value: number
+  constructor(value: number) // 64-bit float
+}
+```
+
+#### Examples
+
+```typescript
+import { Int, Uint, Float64 } from '@automerge/automerge'
+
+let doc = Automerge.from({
+  integer: new Int(42),
+  unsigned: new Uint(100),
+  decimal: new Float64(3.14159)
+})
+```
+
+---
+
+## Callback Types
+
+### PatchCallback\<T\>
+
+Callback function to receive notifications of document changes.
+
+```typescript
+type PatchCallback<T> = (
+  patches: Array<Patch>,
+  info: PatchInfo<T>
+) => void
+
+type PatchInfo<T> = {
+  before: Doc<T>
+  after: Doc<T>
+  source: PatchSource
+}
+
+type PatchSource =
+  | "from"
+  | "emptyChange"
+  | "change"
+  | "changeAt"
+  | "merge"
+  | "loadIncremental"
+  | "applyChanges"
+  | "receiveSyncMessage"
+```
+
+#### Examples
+
+<CodeGroup>
+
+```typescript Basic Patch Callback
+const patchCallback = (patches, info) => {
+  console.log(`Source: ${info.source}`)
+  console.log(`Patches: ${patches.length}`)
+  
+  patches.forEach(patch => {
+    console.log(`  ${patch.action} at ${patch.path.join('.')}`)  
+  })
+}
+
+let doc = Automerge.init({ patchCallback })
+
+doc = Automerge.change(doc, d => {
+  d.value = 42
+})
+// Logs:
+// Source: change
+// Patches: 1
+//   put at value
+```
+
+```typescript React Integration
+import { useState } from 'react'
+
+function useAutomerge<T>(initialDoc: Doc<T>) {
+  const [doc, setDoc] = useState(initialDoc)
+  
+  const patchCallback = (patches, info) => {
+    setDoc(info.after)
+  }
+  
+  const change = (fn: ChangeFn<T>) => {
+    const newDoc = Automerge.change(doc, { patchCallback }, fn)
+    setDoc(newDoc)
+  }
+  
+  return [doc, change] as const
+}
+```
+
+```typescript Selective Updates
+const patchCallback = (patches, info) => {
+  // Only update UI for specific paths
+  const relevantPatches = patches.filter(patch => 
+    patch.path[0] === 'todos'
+  )
+  
+  if (relevantPatches.length > 0) {
+    updateTodoList(info.after)
+  }
+}
+```
+
+</CodeGroup>
+
+---
+
+### ChangeFn\<T\>
+
+Function that modifies a document within a change block.
+
+```typescript
+type ChangeFn<T> = (doc: T) => void
+```
+
+#### Examples
+
+```typescript
+type TodoList = {
+  items: Array<{ text: string; done: boolean }>
+}
+
+const addTodo: ChangeFn<TodoList> = (doc) => {
+  doc.items.push({
+    text: "New todo",
+    done: false
+  })
+}
+
+let doc = Automerge.init<TodoList>()
+doc = Automerge.change(doc, addTodo)
+```
+
+---
+
+## Patch Types
+
+Patches describe changes to a document.
+
+### Patch
+
+Base patch type - see the Automerge documentation for full patch structure.
+
+```typescript
+type Patch = PutPatch | DelPatch | InsertPatch | IncPatch | SpliceTextPatch
+```
+
+Common fields:
+- `action`: Type of patch ("put", "del", "insert", "inc", "splice")
+- `path`: Path to the changed property
+- `conflict`: Whether this change creates a conflict
+
+---
+
+## Cursor Types
+
+### Cursor
+
+String representing a stable position in text.
+
+```typescript
+type Cursor = string
+```
+
+### CursorPosition
+
+Specification for creating a cursor.
+
+```typescript
+type CursorPosition = number | "start" | "end"
+```
+
+### MoveCursor
+
+Direction a cursor moves when its character is deleted.
+
+```typescript
+type MoveCursor = "before" | "after"
+```
+
+#### Examples
+
+```typescript
+let doc = Automerge.from({ text: "Hello" })
+
+const cursor: Cursor = Automerge.getCursor(
+  doc,
+  ["text"],
+  5,
+  "after"
+)
+
+const position: number = Automerge.getCursorPosition(
+  doc,
+  ["text"],
+  cursor
+)
+```
+
+---
+
+## Mark Types
+
+### MarkValue
+
+Value that can be assigned to a mark.
+
+```typescript
+type MarkValue = string | number | null | boolean | Date | Uint8Array
+```
+
+### Mark
+
+A formatting mark on text.
+
+```typescript
+type Mark = {
+  name: string
+  value: MarkValue
+  start: number
+  end: number
+}
+```
+
+### MarkSet
+
+Marks active at a specific position.
+
+```typescript
+type MarkSet = {
+  [name: string]: MarkValue
+}
+```
+
+### MarkRange
+
+Range specification for applying marks.
+
+```typescript
+type MarkRange = {
+  start: number | Cursor
+  end: number | Cursor
+  expand?: "before" | "after" | "both" | "none"
+}
+```
+
+#### Examples
+
+```typescript
+let doc = Automerge.from({ text: "Hello World" })
+
+const range: MarkRange = {
+  start: 0,
+  end: 5,
+  expand: "both"
+}
+
+doc = Automerge.change(doc, d => {
+  Automerge.mark(d, ["text"], range, "bold", true)
+})
+
+const marks: Mark[] = Automerge.marks(doc, ["text"])
+const marksAt5: MarkSet | null = Automerge.marksAt(doc, ["text"], 5)
+```
+
+---
+
+## Sync Types
+
+### SyncState
+
+Opaque type tracking sync state with a peer.
+
+```typescript
+type SyncState = /* opaque */
+```
+
+Create with `initSyncState()`, update with `generateSyncMessage()` and `receiveSyncMessage()`.
+
+### SyncMessage
+
+Binary sync message to send to a peer.
+
+```typescript
+type SyncMessage = Uint8Array
+```
+
+---
+
+## Change Types
+
+### Change
+
+Binary representation of a change.
+
+```typescript
+type Change = Uint8Array
+```
+
+### Heads
+
+Array of change hashes representing document state.
+
+```typescript
+type Heads = string[]
+```
+
+### ActorId
+
+String identifying the actor (peer) making changes.
+
+```typescript
+type ActorId = string
+```
+
+#### Examples
+
+```typescript
+const actorId: ActorId = "user-123"
+let doc = Automerge.init({ actor: actorId })
+
+const currentActorId = Automerge.getActorId(doc)
+
+const heads: Heads = Automerge.getHeads(doc)
+const changes: Change[] = Automerge.getAllChanges(doc)
+```
+
+---
+
+## Options Types
+
+### InitOptions\<T\>
+
+Options for creating documents.
+
+```typescript
+type InitOptions<T> = {
+  actor?: ActorId
+  freeze?: boolean
+  patchCallback?: PatchCallback<T>
+}
+```
+
+### ChangeOptions\<T\>
+
+Options for making changes.
+
+```typescript
+type ChangeOptions<T> = {
+  message?: string
+  time?: number | undefined
+  patchCallback?: PatchCallback<T>
+}
+```
+
+### ApplyOptions\<T\>
+
+Options for applying changes.
+
+```typescript
+type ApplyOptions<T> = {
+  patchCallback?: PatchCallback<T>
+}
+```
+
+#### Examples
+
+```typescript
+const initOpts: InitOptions<MyDoc> = {
+  actor: "user-123",
+  freeze: true,
+  patchCallback: (patches) => console.log(patches)
+}
+
+const changeOpts: ChangeOptions<MyDoc> = {
+  message: "Update data",
+  time: Math.floor(Date.now() / 1000),
+  patchCallback: (patches) => console.log(patches)
+}
+
+const applyOpts: ApplyOptions<MyDoc> = {
+  patchCallback: (patches) => console.log(patches)
+}
+```
+
+---
+
+## Utility Types
+
+### Prop
+
+Property key (string or number).
+
+```typescript
+type Prop = string | number
+```
+
+### ObjID
+
+Internal object identifier.
+
+```typescript
+type ObjID = string
+```
+
+### Conflicts
+
+Map of conflicting values for a property.
+
+```typescript
+type Conflicts = {
+  [key: string]: AutomergeValue
+}
+```
+
+#### Examples
+
+```typescript
+let doc1 = Automerge.from({ value: "A" })
+let doc2 = Automerge.clone(doc1)
+
+doc1 = Automerge.change(doc1, d => d.value = "B")
+doc2 = Automerge.change(doc2, d => d.value = "C")
+
+const merged = Automerge.merge(doc1, doc2)
+
+const conflicts: Conflicts | undefined = Automerge.getConflicts(
+  merged,
+  "value"
+)
+
+if (conflicts) {
+  Object.entries(conflicts).forEach(([hash, value]) => {
+    console.log(`Conflict ${hash}: ${value}`)
+  })
+}
+```

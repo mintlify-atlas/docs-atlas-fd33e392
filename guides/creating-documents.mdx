@@ -1,0 +1,145 @@
+---
+title: Creating Documents
+description: Learn how to create and initialize Automerge documents
+---
+
+Automerge documents are the fundamental data structures for building collaborative applications. This guide covers different ways to create and initialize documents.
+
+## Creating an empty document
+
+Use `init()` to create a new, empty Automerge document:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+type DocType = {
+  title: string
+  items: string[]
+}
+
+let doc = Automerge.init<DocType>()
+```
+
+<Note>
+Automerge automatically generates a random actor ID for each document. The actor ID ensures that concurrent changes from different sources can be uniquely identified.
+</Note>
+
+## Creating a document with initial data
+
+Use `from()` to create a document from an existing JavaScript object:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({
+  tasks: [
+    { description: "feed fish", done: false },
+    { description: "water plants", done: false },
+  ],
+})
+```
+
+The `from()` function automatically converts your JavaScript object into an Automerge document and records the initialization as the first change.
+
+## Specifying an actor ID
+
+You can provide a custom actor ID instead of using a random one:
+
+<CodeGroup>
+```typescript init
+let doc = Automerge.init<DocType>({
+  actor: "user-123"
+})
+```
+
+```typescript from
+let doc = Automerge.from(
+  { title: "My Document" },
+  { actor: "user-123" }
+)
+```
+</CodeGroup>
+
+<Warning>
+Actor IDs must be unique across all concurrent editing sessions. Using the same actor ID in multiple threads or processes will cause conflicts. In most cases, let Automerge generate random actor IDs automatically.
+</Warning>
+
+## Advanced initialization options
+
+Both `init()` and `from()` accept additional options:
+
+```typescript
+let doc = Automerge.init<DocType>({
+  actor: "user-123",
+  freeze: true,  // Make documents immutable (recommended for React)
+  patchCallback: (patches, info) => {
+    console.log("Document changed:", patches)
+  }
+})
+```
+
+### Available options
+
+- **`actor`**: Custom actor ID (string)
+- **`freeze`**: Freeze documents to prevent accidental mutations (boolean)
+- **`patchCallback`**: Function called when the document changes (see [Making Changes](/guides/making-changes))
+
+## Working with TypeScript
+
+Automerge is fully typed. Define your document schema using TypeScript interfaces:
+
+```typescript
+interface Todo {
+  id: string
+  description: string
+  done: boolean
+  created: Date
+}
+
+interface TodoDoc {
+  todos: Todo[]
+  lastModified: Date
+}
+
+let doc = Automerge.init<TodoDoc>()
+
+doc = Automerge.change(doc, d => {
+  d.todos = []
+  d.lastModified = new Date()
+})
+```
+
+<Tip>
+Defining types for your documents helps catch errors at compile time and provides better IDE autocomplete support.
+</Tip>
+
+## Cloning documents
+
+Create independent copies of documents using `clone()`:
+
+```typescript
+let doc1 = Automerge.from({ x: 1 })
+
+// Create an independent copy
+let doc2 = Automerge.clone(doc1)
+
+// Changes to doc2 won't affect doc1 (until merged)
+doc2 = Automerge.change(doc2, d => {
+  d.x = 2
+})
+```
+
+<Note>
+Cloning creates a full copy of the document with a new actor ID. This is different from simply assigning `doc2 = doc1`, which creates a reference to the same document state.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Making Changes" icon="pen" href="/guides/making-changes">
+    Learn how to modify documents using the change function
+  </Card>
+  <Card title="Save and Load" icon="floppy-disk" href="/guides/save-and-load">
+    Persist documents to disk or network
+  </Card>
+</CardGroup>

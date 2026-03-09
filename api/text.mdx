@@ -1,0 +1,404 @@
+---
+title: Text Editing
+description: Working with text sequences in Automerge
+---
+
+## Overview
+
+Automerge provides powerful text editing capabilities with CRDT-based collaborative editing. Text in Automerge is represented as strings and can be modified using splice operations that handle concurrent edits gracefully.
+
+---
+
+## splice
+
+Modify a string by deleting and/or inserting text at a position.
+
+```typescript
+function splice<T>(
+  doc: Doc<T>,
+  path: Prop[],
+  index: number | Cursor,
+  del: number,
+  newText?: string
+): void
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document containing the string (must be within a change callback)
+</ParamField>
+
+<ParamField path="path" type="Prop[]" required>
+  The path to the string property
+</ParamField>
+
+<ParamField path="index" type="number | Cursor" required>
+  The position to edit. Can be an index or a `Cursor`. If a cursor is used, it will point to the end of `newText` after the edit.
+</ParamField>
+
+<ParamField path="del" type="number" required>
+  Number of code units to delete. Positive deletes after cursor, negative deletes before.
+</ParamField>
+
+<ParamField path="newText" type="string">
+  The string to insert (if any)
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Basic Insert
+let doc = Automerge.from({ content: "Hello" })
+
+doc = Automerge.change(doc, d => {
+  // Insert " World" at position 5
+  Automerge.splice(d, ["content"], 5, 0, " World")
+})
+
+console.log(doc.content) // "Hello World"
+```
+
+```typescript Delete Text
+let doc = Automerge.from({ content: "Hello World" })
+
+doc = Automerge.change(doc, d => {
+  // Delete 6 characters starting at position 5
+  Automerge.splice(d, ["content"], 5, 6)
+})
+
+console.log(doc.content) // "Hello"
+```
+
+```typescript Replace Text
+let doc = Automerge.from({ content: "Hello World" })
+
+doc = Automerge.change(doc, d => {
+  // Replace "World" with "Universe" at position 6
+  Automerge.splice(d, ["content"], 6, 5, "Universe")
+})
+
+console.log(doc.content) // "Hello Universe"
+```
+
+```typescript Using Cursors
+let doc = Automerge.from({ text: "Hello World" })
+
+const cursor = Automerge.getCursor(doc, ["text"], 5)
+
+doc = Automerge.change(doc, d => {
+  // Insert at cursor position
+  Automerge.splice(d, ["text"], cursor, 0, "Beautiful ")
+})
+
+console.log(doc.text) // "Hello Beautiful World"
+```
+
+```typescript Nested Path
+type Doc = {
+  posts: Array<{ title: string; body: string }>
+}
+
+let doc = Automerge.from<Doc>({
+  posts: [{ title: "First", body: "Content" }]
+})
+
+doc = Automerge.change(doc, d => {
+  // Edit nested string
+  Automerge.splice(d, ["posts", 0, "body"], 7, 0, " here")
+})
+
+console.log(doc.posts[0].body) // "Content here"
+```
+
+```typescript Delete Before Cursor
+doc = Automerge.change(doc, d => {
+  // Delete 5 characters before position 11
+  Automerge.splice(d, ["text"], 11, -5)
+})
+```
+
+</CodeGroup>
+
+<Note>
+  When using a cursor with `splice`, the cursor will automatically update to point to the end of the inserted text, allowing you to reuse it for subsequent insertions.
+</Note>
+
+---
+
+## updateText
+
+Update a string by diffing the old and new values.
+
+```typescript
+function updateText(
+  doc: Doc<unknown>,
+  path: Prop[],
+  newText: string
+): void
+```
+
+<ParamField path="doc" type="Doc<unknown>" required>
+  The document (must be within a change callback)
+</ParamField>
+
+<ParamField path="path" type="Prop[]" required>
+  The path to the string property
+</ParamField>
+
+<ParamField path="newText" type="string" required>
+  The new text value
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Replace Content
+let doc = Automerge.from({ content: "Hello World" })
+
+doc = Automerge.change(doc, d => {
+  Automerge.updateText(d, ["content"], "Hello Universe")
+})
+
+console.log(doc.content) // "Hello Universe"
+```
+
+```typescript Sync External Editor
+type Editor = {
+  content: string
+}
+
+let doc = Automerge.from<Editor>({ content: "" })
+
+// User types in external editor
+const editorContent = "New content from user"
+
+// Update doc to match editor
+doc = Automerge.change(doc, d => {
+  Automerge.updateText(d, ["content"], editorContent)
+})
+```
+
+</CodeGroup>
+
+<Warning>
+  `updateText` calculates a diff and converts it to splice operations. This may not merge as well as capturing actual user input. Use direct `splice` calls when possible.
+</Warning>
+
+---
+
+## insertAt / deleteAt
+
+Helper methods for lists that work with text-like arrays.
+
+```typescript
+function insertAt<T>(list: T[], index: number, ...values: T[]): void
+function deleteAt<T>(list: T[], index: number, numDelete?: number): void
+```
+
+<ParamField path="list" type="T[]" required>
+  The array to modify (must be within a change callback)
+</ParamField>
+
+<ParamField path="index" type="number" required>
+  The position to insert/delete at
+</ParamField>
+
+<ParamField path="values" type="T[]">
+  (insertAt only) Values to insert
+</ParamField>
+
+<ParamField path="numDelete" type="number">
+  (deleteAt only) Number of items to delete (default: 1)
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+
+```typescript Insert into List
+let doc = Automerge.from({ items: ["a", "b", "d"] })
+
+doc = Automerge.change(doc, d => {
+  // Insert "c" at index 2
+  Automerge.insertAt(d.items, 2, "c")
+})
+
+console.log(doc.items) // ["a", "b", "c", "d"]
+```
+
+```typescript Delete from List
+let doc = Automerge.from({ items: ["a", "b", "c", "d"] })
+
+doc = Automerge.change(doc, d => {
+  // Delete 2 items at index 1
+  Automerge.deleteAt(d.items, 1, 2)
+})
+
+console.log(doc.items) // ["a", "d"]
+```
+
+```typescript List Methods
+// Lists also have these methods built-in
+doc = Automerge.change(doc, d => {
+  d.items.insertAt(0, "first")
+  d.items.deleteAt(1)
+})
+```
+
+</CodeGroup>
+
+---
+
+## Working with Text in Objects
+
+### Direct String Modification
+
+For simple cases, you can assign strings directly:
+
+```typescript
+let doc = Automerge.from({ title: "" })
+
+doc = Automerge.change(doc, d => {
+  d.title = "My Document"
+})
+```
+
+However, this replaces the entire string and doesn't preserve character-level history. Use `splice` for better merge behavior.
+
+### Character-Level Editing
+
+For collaborative text editing, use `splice` to preserve granular history:
+
+<CodeGroup>
+
+```typescript Text Editor
+type Document = {
+  title: string
+  body: string
+}
+
+let doc = Automerge.from<Document>({
+  title: "Untitled",
+  body: ""
+})
+
+// User types "H"
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["body"], 0, 0, "H")
+})
+
+// User types "e"
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["body"], 1, 0, "e")
+})
+
+// User types "llo"
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["body"], 2, 0, "llo")
+})
+
+console.log(doc.body) // "Hello"
+```
+
+```typescript Track Cursor Position
+let doc = Automerge.from({ content: "Hello World" })
+let cursor = Automerge.getCursor(doc, ["content"], 6)
+
+// Another peer makes an edit
+let doc2 = Automerge.clone(doc)
+doc2 = Automerge.change(doc2, d => {
+  Automerge.splice(d, ["content"], 0, 0, "Well, ")
+})
+
+// Merge changes
+doc = Automerge.merge(doc, doc2)
+
+// Cursor automatically adjusts
+const newPos = Automerge.getCursorPosition(doc, ["content"], cursor)
+console.log(newPos) // 12 (was 6, now adjusted for "Well, " insertion)
+```
+
+</CodeGroup>
+
+---
+
+## Text Spans
+
+Get text with formatting information using spans:
+
+```typescript
+function spans<T>(doc: Doc<T>, path: Prop[]): Span[]
+```
+
+<ParamField path="doc" type="Doc<T>" required>
+  The document
+</ParamField>
+
+<ParamField path="path" type="Prop[]" required>
+  Path to the text
+</ParamField>
+
+<ResponseField name="return" type="Span[]">
+  Array of spans with text and formatting information
+</ResponseField>
+
+### Examples
+
+```typescript
+let doc = Automerge.from({ text: "Hello World" })
+
+// Add formatting
+doc = Automerge.change(doc, d => {
+  Automerge.mark(d, ["text"], { start: 0, end: 5 }, "bold", true)
+})
+
+const spans = Automerge.spans(doc, ["text"])
+console.log(spans)
+// [
+//   { type: "text", value: "Hello", marks: { bold: true } },
+//   { type: "text", value: " World", marks: {} }
+// ]
+```
+
+---
+
+## Best Practices
+
+### 1. Use splice for collaborative editing
+
+```typescript
+// Good: Preserves character-level history
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["text"], position, 0, "new text")
+})
+
+// Less ideal: Replaces entire string
+doc = Automerge.change(doc, d => {
+  d.text = d.text + "new text"
+})
+```
+
+### 2. Use cursors for persistent positions
+
+```typescript
+// Save cursor position
+const cursor = Automerge.getCursor(doc, ["text"], cursorPos)
+
+// After document changes, get updated position
+const newPos = Automerge.getCursorPosition(doc, ["text"], cursor)
+```
+
+### 3. Batch text operations
+
+```typescript
+// Good: Single change with multiple splices
+doc = Automerge.change(doc, d => {
+  Automerge.splice(d, ["text"], 0, 0, "Hello ")
+  Automerge.splice(d, ["text"], 6, 0, "World")
+})
+
+// Less efficient: Multiple changes
+doc = Automerge.change(doc, d => Automerge.splice(d, ["text"], 0, 0, "Hello "))
+doc = Automerge.change(doc, d => Automerge.splice(d, ["text"], 6, 0, "World"))
+```

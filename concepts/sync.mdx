@@ -1,0 +1,518 @@
+---
+title: 'Sync Protocol'
+description: 'Understanding Automerge sync protocol, SyncState, and network synchronization'
+---
+
+# Synchronization in Automerge
+
+Automerge provides an efficient, stateful sync protocol for transmitting changes between peers over any network transport. The sync protocol minimizes bandwidth by only sending the changes each peer needs.
+
+## Overview
+
+The sync protocol is **stateful**, meaning you maintain a `SyncState` for each peer you're communicating with. This state tracks what each peer knows, enabling efficient incremental updates.
+
+<Note>
+The Automerge sync protocol works over any transport: WebSockets, WebRTC, HTTP, Bluetooth, or even USB drives. It's transport-agnostic.
+</Note>
+
+## Basic Sync Flow
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+// Initialize documents
+let doc1 = Automerge.from({ value: 1 })
+let doc2 = Automerge.init()
+
+// Create sync states for each peer
+let sync1 = Automerge.initSyncState()
+let sync2 = Automerge.initSyncState()
+
+// Peer 1 generates a message
+let message: Automerge.SyncMessage | null
+;[sync1, message] = Automerge.generateSyncMessage(doc1, sync1)
+
+if (message) {
+  // Send message to Peer 2
+  network.send(message)
+  
+  // Peer 2 receives and processes
+  ;[doc2, sync2] = Automerge.receiveSyncMessage(doc2, sync2, message)
+  
+  // Peer 2 generates a response
+  ;[sync2, message] = Automerge.generateSyncMessage(doc2, sync2)
+  
+  if (message) {
+    // Send back to Peer 1
+    network.send(message)
+    ;[doc1, sync1] = Automerge.receiveSyncMessage(doc1, sync1, message)
+  }
+}
+```
+
+## SyncState
+
+A `SyncState` object tracks the synchronization state with a remote peer:
+
+```typescript
+// Create a new sync state
+const syncState = Automerge.initSyncState()
+```
+
+### What SyncState Tracks
+
+The sync state maintains:
+- **Last sent heads**: What state we last told this peer about
+- **Shared heads**: What state we know we have in common
+- **Bloom filter**: A probabilistic data structure to efficiently determine what changes the peer might need
+
+<Tip>
+You maintain **one SyncState per peer**. If you're syncing with 5 peers, you need 5 separate `SyncState` objects.
+</Tip>
+
+## Generating Sync Messages
+
+Use `generateSyncMessage()` to create a message to send:
+
+```typescript
+let doc = Automerge.from({ tasks: [] })
+let syncState = Automerge.initSyncState()
+
+const [newSyncState, message] = Automerge.generateSyncMessage(doc, syncState)
+
+if (message) {
+  // Send this binary message to the peer
+  await sendToNetwork(message)
+  
+  // Update your sync state
+  syncState = newSyncState
+} else {
+  // null means we're in sync - no message needed
+  console.log("Already in sync with peer")
+}
+```
+
+### Return Values
+
+`generateSyncMessage()` returns a tuple:
+1. **Updated SyncState**: Always use this new state
+2. **Message or null**: `null` means no sync needed
+
+## Receiving Sync Messages
+
+Use `receiveSyncMessage()` to process incoming messages:
+
+```typescript
+let doc = Automerge.init()
+let syncState = Automerge.initSyncState()
+
+// Receive message from network
+const incomingMessage = await receiveFromNetwork()
+
+// Process it
+const [newDoc, newSyncState, _] = Automerge.receiveSyncMessage(
+  doc,
+  syncState,
+  incomingMessage
+)
+
+// Update your state
+doc = newDoc
+syncState = newSyncState
+
+// Generate response (might be null if nothing to send back)
+const [finalSyncState, response] = Automerge.generateSyncMessage(doc, syncState)
+syncState = finalSyncState
+
+if (response) {
+  await sendToNetwork(response)
+}
+```
+
+<Note>
+The third element of the return tuple is deprecated and always `null`. It used to contain a sync message to send back, but now you should call `generateSyncMessage()` explicitly.
+</Note>
+
+## Complete Sync Loop
+
+Here's a complete example syncing two peers:
+
+```typescript
+function syncDocuments(
+  doc1: Automerge.Doc<any>,
+  doc2: Automerge.Doc<any>
+): [Automerge.Doc<any>, Automerge.Doc<any>] {
+  
+  let sync1 = Automerge.initSyncState()
+  let sync2 = Automerge.initSyncState()
+  
+  let msg1: Automerge.SyncMessage | null = null
+  let msg2: Automerge.SyncMessage | null = null
+  
+  const MAX_ITERATIONS = 10
+  let iterations = 0
+  
+  do {
+    // Peer 1 generates message
+    ;[sync1, msg1] = Automerge.generateSyncMessage(doc1, sync1)
+    
+    // Peer 2 generates message
+    ;[sync2, msg2] = Automerge.generateSyncMessage(doc2, sync2)
+    
+    // Exchange messages
+    if (msg1) {
+      ;[doc2, sync2] = Automerge.receiveSyncMessage(doc2, sync2, msg1)
+    }
+    
+    if (msg2) {
+      ;[doc1, sync1] = Automerge.receiveSyncMessage(doc1, sync1, msg2)
+    }
+    
+    iterations++
+    
+    if (iterations > MAX_ITERATIONS) {
+      throw new Error("Sync did not converge")
+    }
+  } while (msg1 || msg2)
+  
+  return [doc1, doc2]
+}
+
+// Usage
+let doc1 = Automerge.from({ value: 1 })
+let doc2 = Automerge.from({ value: 2 })
+
+[doc1, doc2] = syncDocuments(doc1, doc2)
+
+// Both documents are now identical
+console.log(Automerge.getHeads(doc1))
+console.log(Automerge.getHeads(doc2))
+```
+
+## Continuous Sync
+
+For real-time collaboration, maintain an ongoing sync connection:
+
+```typescript
+class SyncConnection {
+  doc: Automerge.Doc<any>
+  syncState: Automerge.SyncState
+  websocket: WebSocket
+  
+  constructor(doc: Automerge.Doc<any>, url: string) {
+    this.doc = doc
+    this.syncState = Automerge.initSyncState()
+    this.websocket = new WebSocket(url)
+    
+    this.websocket.onopen = () => this.sendSyncMessage()
+    this.websocket.onmessage = (event) => this.handleMessage(event.data)
+  }
+  
+  sendSyncMessage() {
+    const [newSyncState, message] = Automerge.generateSyncMessage(
+      this.doc,
+      this.syncState
+    )
+    
+    this.syncState = newSyncState
+    
+    if (message) {
+      this.websocket.send(message)
+    }
+  }
+  
+  handleMessage(data: Uint8Array) {
+    const [newDoc, newSyncState] = Automerge.receiveSyncMessage(
+      this.doc,
+      this.syncState,
+      data
+    )
+    
+    this.doc = newDoc
+    this.syncState = newSyncState
+    
+    // Send response
+    this.sendSyncMessage()
+    
+    // Notify app of changes
+    this.onDocumentUpdate(newDoc)
+  }
+  
+  // Call this after making local changes
+  localChange() {
+    this.sendSyncMessage()
+  }
+  
+  onDocumentUpdate(doc: Automerge.Doc<any>) {
+    // Override this to handle updates
+    console.log("Document updated:", doc)
+  }
+}
+
+// Usage
+const sync = new SyncConnection(
+  Automerge.init(),
+  "ws://localhost:8080"
+)
+
+// After making local changes
+sync.doc = Automerge.change(sync.doc, d => {
+  d.value = 42
+})
+sync.localChange()
+```
+
+## Checking Sync Status
+
+Determine if a peer has received your changes:
+
+```typescript
+const hasOurChanges = Automerge.hasOurChanges(doc, remoteSyncState)
+
+if (hasOurChanges) {
+  console.log("Peer hasn't received all our changes yet")
+} else {
+  console.log("Peer is up to date with our changes")
+}
+```
+
+## Persisting Sync State
+
+For long-running applications, you may want to persist sync state:
+
+```typescript
+// Save sync state
+const encoded = Automerge.encodeSyncState(syncState)
+localStorage.setItem('syncState', JSON.stringify(Array.from(encoded)))
+
+// Load sync state
+const stored = localStorage.getItem('syncState')
+if (stored) {
+  const bytes = new Uint8Array(JSON.parse(stored))
+  syncState = Automerge.decodeSyncState(bytes)
+} else {
+  syncState = Automerge.initSyncState()
+}
+```
+
+<Warning>
+Only persist sync state for stable, long-lived connections. For most applications, creating a fresh `SyncState` with `initSyncState()` is simpler and sufficient.
+</Warning>
+
+## Sync Messages
+
+Sync messages are binary (`Uint8Array`) and contain:
+
+1. **Heads**: The current state of the sending peer
+2. **Need**: Hashes of changes this peer needs
+3. **Have**: Bloom filter describing what changes this peer has
+4. **Changes**: Actual change data being transmitted
+
+### Encoding and Decoding
+
+You can inspect sync messages:
+
+```typescript
+const [syncState, message] = Automerge.generateSyncMessage(doc, syncState)
+
+if (message) {
+  // Decode to inspect
+  const decoded = Automerge.decodeSyncMessage(message)
+  
+  console.log("Heads:", decoded.heads)
+  console.log("Need:", decoded.need)
+  console.log("Changes:", decoded.changes.length)
+  
+  // Encode back to binary
+  const reencoded = Automerge.encodeSyncMessage(decoded)
+}
+```
+
+## Patch Callbacks During Sync
+
+Get notified of changes when receiving sync messages:
+
+```typescript
+let patches: Automerge.Patch[] = []
+
+const [newDoc, newSyncState] = Automerge.receiveSyncMessage(
+  doc,
+  syncState,
+  message,
+  {
+    patchCallback: (p, info) => {
+      patches = p
+      console.log("Changes from sync:", info.after)
+    }
+  }
+)
+
+// Apply patches to UI, etc.
+updateUI(patches)
+```
+
+## Optimization: Incremental Sync
+
+For large documents, use incremental saving:
+
+```typescript
+// After making changes
+let doc = Automerge.change(doc, d => {
+  d.items.push({ id: 1, name: "New Item" })
+})
+
+// Get only the new changes
+const incremental = Automerge.saveIncremental(doc)
+
+// Send just the incremental data
+await sendToNetwork(incremental)
+
+// Receiver applies incrementally
+remoteDoc = Automerge.loadIncremental(remoteDoc, incremental)
+```
+
+## Multi-Peer Sync
+
+Manage sync states for multiple peers:
+
+```typescript
+class MultiPeerSync {
+  doc: Automerge.Doc<any>
+  peers: Map<string, {
+    syncState: Automerge.SyncState
+    connection: any
+  }>
+  
+  constructor(doc: Automerge.Doc<any>) {
+    this.doc = doc
+    this.peers = new Map()
+  }
+  
+  addPeer(peerId: string, connection: any) {
+    this.peers.set(peerId, {
+      syncState: Automerge.initSyncState(),
+      connection
+    })
+    
+    // Initiate sync
+    this.syncWithPeer(peerId)
+  }
+  
+  syncWithPeer(peerId: string) {
+    const peer = this.peers.get(peerId)
+    if (!peer) return
+    
+    const [newSyncState, message] = Automerge.generateSyncMessage(
+      this.doc,
+      peer.syncState
+    )
+    
+    peer.syncState = newSyncState
+    
+    if (message) {
+      peer.connection.send(message)
+    }
+  }
+  
+  receiveSyncMessage(peerId: string, message: Uint8Array) {
+    const peer = this.peers.get(peerId)
+    if (!peer) return
+    
+    const [newDoc, newSyncState] = Automerge.receiveSyncMessage(
+      this.doc,
+      peer.syncState,
+      message
+    )
+    
+    this.doc = newDoc
+    peer.syncState = newSyncState
+    
+    // Sync with this peer and broadcast to others
+    this.syncWithPeer(peerId)
+    this.broadcastToOtherPeers(peerId)
+  }
+  
+  broadcastToOtherPeers(excludePeerId: string) {
+    for (const [peerId, _] of this.peers) {
+      if (peerId !== excludePeerId) {
+        this.syncWithPeer(peerId)
+      }
+    }
+  }
+  
+  localChange(changeFn: (doc: any) => void) {
+    this.doc = Automerge.change(this.doc, changeFn)
+    
+    // Broadcast to all peers
+    for (const [peerId, _] of this.peers) {
+      this.syncWithPeer(peerId)
+    }
+  }
+}
+```
+
+## Best Practices
+
+### 1. One SyncState Per Peer
+
+```typescript
+// ✅ Correct
+const peerSyncStates = new Map<string, Automerge.SyncState>()
+peerSyncStates.set("peer1", Automerge.initSyncState())
+peerSyncStates.set("peer2", Automerge.initSyncState())
+
+// ❌ Wrong - sharing sync state
+const sharedSyncState = Automerge.initSyncState() // Don't reuse!
+```
+
+### 2. Always Call generateSyncMessage After receiveSyncMessage
+
+```typescript
+// Receive message
+const [doc, syncState] = Automerge.receiveSyncMessage(doc, syncState, msg)
+
+// Immediately check if we need to respond
+const [newSyncState, response] = Automerge.generateSyncMessage(doc, syncState)
+
+if (response) {
+  send(response)
+}
+```
+
+### 3. Handle Connection Interruptions
+
+```typescript
+class ResilientSync {
+  reconnect() {
+    // Reset sync state on reconnection
+    this.syncState = Automerge.initSyncState()
+    
+    // Resync from scratch
+    this.sendSyncMessage()
+  }
+}
+```
+
+### 4. Debounce Sync Messages
+
+```typescript
+class DebouncedSync {
+  syncTimeout: any = null
+  
+  scheduleSyncMessage() {
+    if (this.syncTimeout) {
+      clearTimeout(this.syncTimeout)
+    }
+    
+    this.syncTimeout = setTimeout(() => {
+      this.sendSyncMessage()
+    }, 100) // Wait 100ms for more changes
+  }
+}
+```
+
+## Next Steps
+
+- Review [Changes](/concepts/changes) to understand what gets synced
+- Learn about [Merging](/concepts/merging) to see how synced changes combine
+- Explore [Conflicts](/concepts/conflicts) for handling concurrent edits

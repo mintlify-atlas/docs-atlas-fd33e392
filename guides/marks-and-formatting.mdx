@@ -1,0 +1,390 @@
+---
+title: Marks and Formatting
+description: Learn how to add rich text formatting using marks
+---
+
+Automerge supports **marks** for adding rich text formatting (bold, italic, links, etc.) to text. Marks are metadata attached to character ranges that merge correctly during concurrent editing.
+
+## Understanding marks
+
+Marks are named attributes applied to ranges of text:
+
+- A mark has a **name** (e.g., `"bold"`, `"link"`)
+- A mark has a **value** (e.g., `true`, `"https://example.com"`)
+- A mark applies to a **range** of characters
+
+## Applying marks
+
+Use the `mark()` function to apply formatting:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ text: "Hello, world!" })
+
+doc = Automerge.change(doc, d => {
+  // Make "world" bold
+  Automerge.mark(
+    d,
+    ["text"],                          // Path to the text
+    { start: 7, end: 12, expand: "none" },  // Range
+    "bold",                             // Mark name
+    true                                // Mark value
+  )
+})
+```
+
+## Mark ranges
+
+The range parameter specifies where to apply the mark:
+
+```typescript
+type MarkRange = {
+  start: number      // Start position (inclusive)
+  end: number        // End position (exclusive)
+  expand: "before" | "after" | "both" | "none"
+}
+```
+
+### Expand behavior
+
+The `expand` property controls how the mark behaves when text is inserted at its boundaries:
+
+- **`"none"`**: Mark doesn't expand when text is inserted
+- **`"before"`**: Mark expands when text is inserted before it
+- **`"after"`**: Mark expands when text is inserted after it  
+- **`"both"`**: Mark expands in both directions
+
+```typescript
+let doc = Automerge.from({ text: "text" })
+
+doc = Automerge.change(doc, d => {
+  // Mark with "both" expansion
+  Automerge.mark(
+    d,
+    ["text"],
+    { start: 0, end: 4, expand: "both" },
+    "bold",
+    true
+  )
+  
+  // Insert text at the end
+  Automerge.splice(d, ["text"], 4, 0, " here")
+})
+
+// The bold mark now covers "text here"
+const marks = Automerge.marks(doc, ["text"])
+console.log(marks) // [{ name: "bold", value: true, start: 0, end: 9 }]
+```
+
+## Removing marks
+
+Use `unmark()` to remove formatting:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+let doc = Automerge.from({ text: "Hello, world!" })
+
+// Apply bold
+doc = Automerge.change(doc, d => {
+  Automerge.mark(
+    d,
+    ["text"],
+    { start: 0, end: 13, expand: "none" },
+    "bold",
+    true
+  )
+})
+
+// Remove bold from part of the text
+doc = Automerge.change(doc, d => {
+  Automerge.unmark(
+    d,
+    ["text"],
+    { start: 7, end: 13 },  // No expand needed for unmark
+    "bold"
+  )
+})
+
+// Now only "Hello, " is bold
+```
+
+## Querying marks
+
+Get all marks in a document:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+const marks = Automerge.marks(doc, ["text"])
+
+marks.forEach(mark => {
+  console.log(`${mark.name}: ${mark.value} (${mark.start}-${mark.end})`)
+})
+
+// Example output:
+// bold: true (0-5)
+// italic: true (7-12)
+```
+
+### Getting marks at a position
+
+Get all active marks at a specific position:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+const activeMarks = Automerge.marksAt(doc, ["text"], 8)
+
+console.log(activeMarks)
+// { bold: true, italic: true }
+```
+
+## Multiple marks
+
+You can apply multiple marks to the same text:
+
+```typescript
+let doc = Automerge.from({ text: "Important text" })
+
+doc = Automerge.change(doc, d => {
+  // Apply bold
+  Automerge.mark(
+    d,
+    ["text"],
+    { start: 0, end: 14, expand: "none" },
+    "bold",
+    true
+  )
+  
+  // Apply italic to part of it
+  Automerge.mark(
+    d,
+    ["text"],
+    { start: 10, end: 14, expand: "none" },
+    "italic",
+    true
+  )
+  
+  // Add a color
+  Automerge.mark(
+    d,
+    ["text"],
+    { start: 0, end: 9, expand: "none" },
+    "color",
+    "red"
+  )
+})
+
+const marks = Automerge.marks(doc, ["text"])
+console.log(marks)
+// [
+//   { name: "bold", value: true, start: 0, end: 14 },
+//   { name: "color", value: "red", start: 0, end: 9 },
+//   { name: "italic", value: true, start: 10, end: 14 }
+// ]
+```
+
+## Common mark types
+
+Here are typical marks for a rich text editor:
+
+```typescript
+type RichTextDoc = {
+  content: string
+}
+
+function applyFormatting(doc: Automerge.Doc<RichTextDoc>) {
+  doc = Automerge.change(doc, d => {
+    // Text styling
+    Automerge.mark(d, ["content"], range, "bold", true)
+    Automerge.mark(d, ["content"], range, "italic", true)
+    Automerge.mark(d, ["content"], range, "underline", true)
+    Automerge.mark(d, ["content"], range, "strikethrough", true)
+    
+    // Font properties
+    Automerge.mark(d, ["content"], range, "fontSize", 16)
+    Automerge.mark(d, ["content"], range, "fontFamily", "Arial")
+    Automerge.mark(d, ["content"], range, "color", "#ff0000")
+    Automerge.mark(d, ["content"], range, "backgroundColor", "#ffff00")
+    
+    // Links
+    Automerge.mark(d, ["content"], range, "link", "https://example.com")
+    
+    // Comments
+    Automerge.mark(d, ["content"], range, "comment", { 
+      id: "comment-123",
+      author: "Alice",
+      text: "Great point!"
+    })
+  })
+  
+  return doc
+}
+```
+
+## Working with patches
+
+Marks generate patch events when applied:
+
+```typescript
+let patches: Automerge.Patch[] = []
+
+let doc = Automerge.init<{ text: string }>({
+  patchCallback: (p) => patches.push(...p)
+})
+
+doc = Automerge.change(doc, d => {
+  d.text = "Hello"
+})
+
+doc = Automerge.change(doc, d => {
+  Automerge.mark(
+    d,
+    ["text"],
+    { start: 0, end: 5, expand: "none" },
+    "bold",
+    true
+  )
+})
+
+// Check the mark patch
+const markPatch = patches.find(p => p.action === "mark")
+console.log(markPatch)
+// {
+//   action: "mark",
+//   path: ["text"],
+//   marks: [{ name: "bold", start: 0, end: 5, value: true }]
+// }
+```
+
+## Example: Rich text editor
+
+Here's a simple rich text editor with mark support:
+
+```typescript
+import * as Automerge from "@automerge/automerge"
+
+class RichTextEditor {
+  private doc: Automerge.Doc<{ content: string }>
+  
+  constructor(initialText: string = "") {
+    this.doc = Automerge.from({ content: initialText })
+  }
+  
+  toggleBold(start: number, end: number) {
+    const currentMarks = Automerge.marksAt(this.doc, ["content"], start)
+    
+    this.doc = Automerge.change(this.doc, d => {
+      if (currentMarks.bold) {
+        // Remove bold
+        Automerge.unmark(d, ["content"], { start, end }, "bold")
+      } else {
+        // Add bold
+        Automerge.mark(
+          d,
+          ["content"],
+          { start, end, expand: "none" },
+          "bold",
+          true
+        )
+      }
+    })
+  }
+  
+  addLink(start: number, end: number, url: string) {
+    this.doc = Automerge.change(this.doc, d => {
+      Automerge.mark(
+        d,
+        ["content"],
+        { start, end, expand: "none" },
+        "link",
+        url
+      )
+    })
+  }
+  
+  getFormattedContent() {
+    const text = this.doc.content
+    const marks = Automerge.marks(this.doc, ["content"])
+    
+    return { text, marks }
+  }
+}
+
+// Usage
+const editor = new RichTextEditor("Hello, world!")
+editor.toggleBold(0, 5)
+editor.addLink(7, 12, "https://example.com")
+
+const { text, marks } = editor.getFormattedContent()
+console.log(text)   // "Hello, world!"
+console.log(marks)  // Bold on "Hello", link on "world"
+```
+
+## Concurrent mark operations
+
+Marks merge correctly during concurrent editing:
+
+```typescript
+let doc1 = Automerge.from({ text: "collaborative editing" })
+let doc2 = Automerge.clone(doc1)
+
+// User 1 makes text bold
+doc1 = Automerge.change(doc1, d => {
+  Automerge.mark(
+    d,
+    ["text"],
+    { start: 0, end: 13, expand: "none" },
+    "bold",
+    true
+  )
+})
+
+// User 2 makes text italic
+doc2 = Automerge.change(doc2, d => {
+  Automerge.mark(
+    d,
+    ["text"],
+    { start: 14, end: 21, expand: "none" },
+    "italic",
+    true
+  )
+})
+
+// Merge - both marks are preserved
+const merged = Automerge.merge(doc1, doc2)
+const marks = Automerge.marks(merged, ["text"])
+
+console.log(marks)
+// [
+//   { name: "bold", value: true, start: 0, end: 13 },
+//   { name: "italic", value: true, start: 14, end: 21 }
+// ]
+```
+
+## Best practices
+
+<Tip>
+**Use expand wisely**: Set `expand: "both"` for marks that should grow when users type (like bold). Use `expand: "none"` for marks that shouldn't grow (like comments).
+</Tip>
+
+<Tip>
+**Namespace mark names**: Use prefixes for custom marks (e.g., `"app:highlight"`) to avoid conflicts.
+</Tip>
+
+<Warning>
+**Performance with many marks**: Having thousands of overlapping marks can impact performance. Consider grouping marks or using block-level formatting.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Cursors" icon="i-cursor" href="/guides/cursors">
+    Track cursor positions in collaborative editing
+  </Card>
+  <Card title="Working with Text" icon="text" href="/guides/working-with-text">
+    Learn more about text operations
+  </Card>
+</CardGroup>
