@@ -1,0 +1,149 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Automerge",
+  "projectDescription": "A JSON-like data structure (a CRDT) that can be modified concurrently by different users, and merged again automatically.",
+  "theme": "palm",
+  "primaryColor": "#f7c833",
+  "lightColor": "#8c742c",
+  "darkColor": "#2c2a24",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/crdts",
+              "concepts/documents",
+              "concepts/changes",
+              "concepts/merging",
+              "concepts/conflicts",
+              "concepts/sync"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/creating-documents",
+              "guides/making-changes",
+              "guides/syncing-documents",
+              "guides/save-and-load",
+              "guides/working-with-text",
+              "guides/marks-and-formatting",
+              "guides/cursors",
+              "guides/conflict-resolution"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/actor-ids",
+              "advanced/cloning",
+              "advanced/viewing-history",
+              "advanced/patches",
+              "advanced/performance"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "JavaScript API",
+            "pages": [
+              "api/overview",
+              "api/documents",
+              "api/changes",
+              "api/sync",
+              "api/text",
+              "api/marks",
+              "api/cursors",
+              "api/types"
+            ]
+          },
+          {
+            "group": "Rust API",
+            "pages": [
+              "api/rust/overview",
+              "api/rust/getting-started"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Resources",
+        "groups": [
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/todo-list",
+              "examples/collaborative-editor",
+              "examples/real-time-sync"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/bundlers",
+              "reference/binary-format",
+              "reference/migration-guide",
+              "reference/changelog"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Conflict-free Replicated Data Types (CRDTs)",
+    "Local-first collaborative editing",
+    "Automatic merge resolution",
+    "Efficient binary format and compression",
+    "Network sync protocol",
+    "Rich text editing with marks and formatting",
+    "Document history and time travel",
+    "Multi-language support (JavaScript, Rust, C)"
+  ],
+  "publicApiSurface": [
+    "init",
+    "from",
+    "clone",
+    "change",
+    "emptyChange",
+    "merge",
+    "load",
+    "save",
+    "loadIncremental",
+    "saveIncremental",
+    "applyChanges",
+    "getChanges",
+    "getAllChanges",
+    "getLastLocalChange",
+    "getHeads",
+    "getActorId",
+    "getConflicts",
+    "view",
+    "initSyncState",
+    "generateSyncMessage",
+    "receiveSyncMessage",
+    "Text",
+    "Counter",
+    "mark",
+    "unmark",
+    "marks",
+    "getCursor",
+    "getCursorPosition",
+    "spans",
+    "updateText"
+  ]
+}
